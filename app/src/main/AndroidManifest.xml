@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- §2.1 du cahier des charges : permissions déclarées dès le squelette -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        L'app doit fonctionner aussi bien sur téléphone/tablette (tactile) que sur
+        boîtier Android TV (D-pad, pas forcément d'écran tactile) : aucune des deux
+        fonctionnalités n'est donc "required" au sens du Play Store / du système.
+    -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="DP-Flix"
+        android:allowBackup="true"
+        android:banner="@drawable/tv_banner_placeholder"
+        android:icon="@drawable/ic_launcher_placeholder">
+        <!--
+            android:icon / android:banner : placeholders volontaires pour cette étape 2b.
+            Les vraies icônes (adaptive icon mobile) et le banner TV définitif arrivent
+            à l'étape 2c (§7 du cahier des charges), tels que fournis par l'utilisateur.
+        -->
+
+        <!-- Point d'entrée MOBILE (téléphone / tablette, tactile) -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.DpFlix">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Point d'entrée TV (boîtier Android TV, télécommande / D-pad) -->
+        <activity
+            android:name=".tv.TvMainActivity"
+            android:exported="true"
+            android:banner="@drawable/tv_banner_placeholder"
+            android:theme="@style/Theme.DpFlix">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

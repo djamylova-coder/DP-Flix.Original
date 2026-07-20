@@ -1,0 +1,100 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+}
+
+android {
+    namespace = "com.dpflix.android"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.dpflix.android"
+        minSdk = 23
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        // Étape 2c-3 : signature release.
+        // En local (ou si les variables ne sont pas définies), ce signingConfig
+        // reste incomplet volontairement : assembleRelease échoue alors avec un
+        // message clair plutôt que de produire un APK non signé.
+        // Sur Codemagic, ces 4 variables sont injectées automatiquement par la
+        // fonctionnalité "Code signing identities" (cf. codemagic.yaml + README).
+        create("release") {
+            val storeFilePath = System.getenv("CM_KEYSTORE_PATH")
+            if (storeFilePath != null) {
+                storeFile = file(storeFilePath)
+                storePassword = System.getenv("CM_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CM_KEY_ALIAS")
+                keyPassword = System.getenv("CM_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
+    }
+}
+
+dependencies {
+    implementation(libs.core.ktx)
+    implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.activity.compose)
+
+    // Compose (mobile)
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.foundation)
+    debugImplementation(libs.compose.ui.tooling)
+
+    // Compose for TV
+    implementation(libs.tv.foundation)
+    implementation(libs.tv.material)
+
+    // Lecteur vidéo (ExoPlayer / Media3)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.session)
+    implementation(libs.media3.ui)
+
+    // Persistance
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+    implementation(libs.datastore.preferences)
+
+    // Réseau
+    implementation(libs.okhttp)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.kotlinx.serialization.json)
+}

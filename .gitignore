@@ -1,0 +1,16 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+
+# Fichiers de signature — NE JAMAIS pousser sur un dépôt public (upload manuel dans Codemagic uniquement)
+*.jks
+*.keystore
+*.p12
