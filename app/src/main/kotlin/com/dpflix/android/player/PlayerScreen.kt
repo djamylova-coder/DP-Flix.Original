@@ -10,6 +10,7 @@ import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
+import com.dpflix.android.settings.SettingsScreen
 import com.dpflix.android.model.Channel
 import com.dpflix.android.model.EpgLoadResult
 import com.dpflix.android.repository.AppRepository
@@ -171,12 +173,23 @@ fun PlayerScreen(
     channel: Channel,
     modifier: Modifier = Modifier,
     osdEnabled: Boolean = true,
-    appRepository: AppRepository? = null
+    appRepository: AppRepository? = null,
+    onRequestFullReset: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var controller by remember(channel.id) { mutableStateOf<PlayerController?>(null) }
     var playerView by remember(channel.id) { mutableStateOf<PlayerView?>(null) }
+
+    // Réglages en incrustation (§4.6) : PAS remember(channel.id), volontairement —
+    // contrairement aux DisposableEffect(channel.id) du contrôleur/de la vue ci-dessus,
+    // qui doivent bien se recréer à chaque zap. L'incrustation, elle, doit justement
+    // NE JAMAIS faire quitter la composition de cet écran (c'est tout son but : garder
+    // controller/playerView ci-dessus vivants pendant que Réglages est affiché) — un zap
+    // pendant que Réglages est ouvert (cas limite improbable, aucun bouton de zap n'est
+    // visible derrière l'incrustation) ne doit donc pas la refermer.
+    var settingsOverlayVisible by remember { mutableStateOf(false) }
+    BackHandler(enabled = settingsOverlayVisible) { settingsOverlayVisible = false }
 
     // Chaine reellement affichee (8c) : distincte de [channel], voir la doc de la fonction.
     var currentChannel by remember(channel.id) { mutableStateOf(channel) }
@@ -557,6 +570,7 @@ fun PlayerScreen(
                 selectedQuality = selectedQuality,
                 onQualityChange = { option -> currentController.setQualityOverride(option) },
                 onRequestNumericEntry = if (appRepository != null) { { openKeypad() } } else null,
+                onOpenSettings = if (appRepository != null) { { settingsOverlayVisible = true } } else null,
                 // Depuis 8d9, PlayerOsd gère lui-même deux zones (bandeau haut + barre de
                 // contrôles bas) : il lui faut tout l'espace, plus seulement le haut.
                 modifier = Modifier.fillMaxSize()
@@ -610,6 +624,23 @@ fun PlayerScreen(
             }
 
             else -> Unit
+        }
+
+        // Incrustation Réglages (§4.6) — voir la doc du paramètre settingsOverlayVisible
+        // plus haut. Rendue en dernier dans ce Box pour passer au-dessus de tout le reste
+        // (vidéo, OSD, indicateurs d'état) ; appRepository != null est garanti ici
+        // puisque c'est la seule condition sous laquelle onOpenSettings existe (voir
+        // l'appel à PlayerOsd ci-dessus).
+        if (settingsOverlayVisible && appRepository != null) {
+            SettingsScreen(
+                appRepository = appRepository,
+                onBack = { settingsOverlayVisible = false },
+                onResetComplete = {
+                    settingsOverlayVisible = false
+                    onRequestFullReset()
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }

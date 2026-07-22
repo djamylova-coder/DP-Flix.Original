@@ -156,7 +156,12 @@ fun DpFlixNavHost(
             ResolvedChannelPlayer(
                 appRepository = appRepository,
                 channelId = channelId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onRequestFullReset = {
+                    navController.navigate(DpFlixDestination.Onboarding.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
             )
         }
     }
@@ -171,7 +176,12 @@ private const val POST_SPLASH_ROUTE = "post_splash_routing"
  * entre-temps), un message simple avec retour plutôt qu'un écran blanc.
  */
 @Composable
-private fun ResolvedChannelPlayer(appRepository: AppRepository, channelId: String, onBack: () -> Unit) {
+private fun ResolvedChannelPlayer(
+    appRepository: AppRepository,
+    channelId: String,
+    onBack: () -> Unit,
+    onRequestFullReset: () -> Unit
+) {
     var channel by remember(channelId) { mutableStateOf<Channel?>(null) }
     var notFound by remember(channelId) { mutableStateOf(false) }
 
@@ -182,7 +192,12 @@ private fun ResolvedChannelPlayer(appRepository: AppRepository, channelId: Strin
 
     val currentChannel = channel
     when {
-        currentChannel != null -> PlayerScreen(channel = currentChannel, modifier = Modifier.fillMaxSize(), appRepository = appRepository)
+        currentChannel != null -> PlayerScreen(
+            channel = currentChannel,
+            modifier = Modifier.fillMaxSize(),
+            appRepository = appRepository,
+            onRequestFullReset = onRequestFullReset
+        )
         notFound -> PlaceholderScreen(
             title = "Chaîne introuvable",
             actions = listOf("Retour" to onBack)

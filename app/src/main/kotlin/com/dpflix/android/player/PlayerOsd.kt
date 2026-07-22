@@ -20,10 +20,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -153,6 +155,7 @@ fun PlayerOsd(
     selectedQuality: QualityOption?,
     onQualityChange: (QualityOption?) -> Unit,
     onRequestNumericEntry: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -248,6 +251,16 @@ fun PlayerOsd(
                     selected = selectedQuality,
                     onSelect = onQualityChange
                 )
+                if (onOpenSettings != null) {
+                    // Ouvre Réglages en incrustation par-dessus la vidéo (qui continue de
+                    // jouer derrière, voir PlayerScreen) plutôt que de naviguer vers un
+                    // écran séparé — ce qui arrêterait la lecture et figerait les
+                    // métriques du Diagnostic (§5.5), alimentées uniquement pendant une
+                    // lecture réellement active (voir PlayerMetricsBridge).
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(imageVector = Icons.Filled.Settings, contentDescription = "Réglages", tint = Color.White)
+                    }
+                }
             }
         }
     }
