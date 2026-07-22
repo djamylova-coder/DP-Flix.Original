@@ -110,29 +110,48 @@ class OnboardingViewModel(
                 }
                 is AddPlaylistResult.Success -> {
                     // §4.2 : la case décide si les chaînes live sont importées ; VOD hors périmètre (§1).
-                    if (form.includeTvChannels) {
+                    val importSucceeded = if (form.includeTvChannels) {
                         importXtreamChannels(credentials, addResult.playlist)
+                    } else {
+                        true
                     }
                     _uiState.update { it.copy(isSubmitting = false) }
-                    onComplete()
+                    if (importSucceeded) {
+                        onComplete()
+                    }
+                    // Sinon (échec d'import) : on reste volontairement sur ce formulaire,
+                    // errorMessage affiche déjà la vraie cause (voir [importXtreamChannels])
+                    // — la playlist est déjà enregistrée, l'utilisateur n'a rien à ressaisir.
                 }
             }
         }
     }
 
-    private suspend fun importXtreamChannels(credentials: XtreamCredentials, playlist: Playlist) {
-        when (val channelsResult = xtreamClient.fetchLiveChannels(credentials, playlist.id)) {
+    /**
+     * @return `true` si l'import a réussi (chaînes persistées), `false` sinon — utilisé
+     * par [submitXtream] pour décider de naviguer immédiatement ou de rester sur ce
+     * formulaire pour montrer la vraie raison de l'échec (voir sa doc).
+     */
+    private suspend fun importXtreamChannels(credentials: XtreamCredentials, playlist: Playlist): Boolean {
+        return when (val channelsResult = xtreamClient.fetchLiveChannels(credentials, playlist.id)) {
             is XtreamResult.Success -> {
                 appRepository.channels.refreshChannels(playlist.id, channelsResult.data.channels)
                 channelsResult.data.detectedEpgUrl?.let { epgUrl ->
                     appRepository.playlists.updatePlaylist(playlist.copy(autoDetectedEpgUrl = epgUrl))
                 }
+                true
             }
             else -> {
-                // La playlist reste enregistrée même si l'import des chaînes échoue ici
-                // (ex. coupure réseau juste après l'authentification) : l'utilisateur
-                // pourra la rafraîchir depuis Réglages → Playlists (§4.3, étape 6f)
-                // plutôt que de perdre toute la saisie du formulaire.
+                // Contrairement à avant (erreur silencieusement ignorée) : la playlist
+                // reste enregistrée (l'utilisateur ne perd pas sa saisie), mais on
+                // affiche désormais la vraie cause de l'échec d'import plutôt que de
+                // naviguer directement vers un accueil sans aucune chaîne et sans
+                // aucune explication (voir la doc de [XtreamClient.fetchLiveChannels]
+                // sur les erreurs désormais distinguables d'un compte réellement vide).
+                _uiState.update {
+                    it.copy(errorMessage = "Playlist enregistrée, mais l'import des chaînes a échoué : ${xtreamErrorMessage(channelsResult)}")
+                }
+                false
             }
         }
     }
