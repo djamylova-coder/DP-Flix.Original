@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -187,6 +188,26 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     /** Dernière chaîne demandée via [playChannel], nécessaire au rechargement complet du watchdog. */
     private var currentChannel: Channel? = null
 
+    // Fix (2026-07-22, second passage) : plusieurs panels Xtream annoncent un
+    // container_extension (m3u8 ou ts) qui ne correspond pas a ce qu'ils servent
+    // reellement sur cette URL. DefaultMediaSourceFactory route le MediaSource a
+    // construire (HLS vs progressif/TS) sur la seule extension de l'URI : si le contenu
+    // reel ne correspond pas a ce que l'extension promettait, aucun extracteur ne sait
+    // le lire -> PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED.
+    private var containerFallbackAttempted = false
+
+    private fun alternateContainerUri(uri: String): String? = when {
+        uri.endsWith(".m3u8", ignoreCase = true) -> uri.dropLast(5) + ".ts"
+        uri.endsWith(".ts", ignoreCase = true) -> uri.dropLast(3) + ".m3u8"
+        else -> null
+    }
+
+    private fun mimeTypeForUri(uri: String): String? = when {
+        uri.endsWith(".m3u8", ignoreCase = true) -> MimeTypes.APPLICATION_M3U8
+        uri.endsWith(".ts", ignoreCase = true) -> MimeTypes.VIDEO_MP2T
+        else -> null
+    }
+
     /**
      * Tampon hybride (§5.1, étape 5c) : si activé, insère un [CacheDataSource] entre
      * ExoPlayer et le réseau, qui écrit chaque segment lu sur disque
@@ -288,6 +309,27 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
+                    // Fix (2026-07-22, second passage) : PARSING_CONTAINER_UNSUPPORTED sur
+                    // un flux Xtream signifie très probablement que l'extension utilisée
+                    // dans l'URL (.m3u8/.ts, voir XtreamClient.buildStreamUrl) ne
+                    // correspond pas à ce que le panel sert réellement à cette adresse.
+                    // Une seule bascule automatique vers l'autre extension avant
+                    // d'abandonner (voir containerFallbackAttempted) : si ça marche,
+                    // l'utilisateur ne voit jamais l'erreur ; sinon, le flux est
+                    // réellement injouable et l'erreur fatale s'affiche normalement.
+                    val channel = currentChannel
+                    if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
+                        !containerFallbackAttempted &&
+                        channel != null
+                    ) {
+                        val altUri = alternateContainerUri(channel.streamUrl)
+                        if (altUri != null) {
+                            containerFallbackAttempted = true
+                            appendRecentError("${error.errorCodeName} - nouvelle tentative avec un autre conteneur")
+                            startPlayback(altUri)
+                            return
+                        }
+                    }
                     // Media3 a déjà épuisé ses tentatives (ResilientLoadErrorHandlingPolicy)
                     // avant de remonter ici : plus rien à faire côté watchdog, la reprise
                     // devient manuelle via retry() (bouton "Réessayer" côté UI).
@@ -484,9 +526,31 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
         _segmentsSucceeded.value = 0
         _segmentsFailed.value = 0
         _recentErrors.value = emptyList()
+        // Fix (2026-07-22, second passage) : nouvelle chaîne = nouvel essai autorisé côté
+        // fallback de conteneur (voir containerFallbackAttempted/onPlayerError) ; sans ce
+        // reset, une chaîne qui a déjà basculé une fois resterait bloquée sans seconde
+        // chance sur un zap ultérieur vers une autre chaîne.
+        containerFallbackAttempted = false
         scheduleWatchdog()
+        startPlayback(channel.streamUrl)
+    }
+
+    /**
+     * Construit et lance le `MediaItem` pour [uri] sur l'`ExoPlayer` déjà existant.
+     * Séparé de [playChannel] (2026-07-22, second passage) pour être réutilisable par le
+     * fallback de conteneur ([onPlayerError]) sans reproduire la remise à zéro des
+     * qualités/métriques/watchdog — celle-ci n'a de sens que pour un vrai changement de
+     * chaîne, pas pour une nouvelle tentative sur la même chaîne avec une autre extension.
+     *
+     * `setMimeType` explicite (déduit de [mimeTypeForUri]) plutôt que de laisser
+     * `DefaultMediaSourceFactory` deviner seul : lève l'ambiguïté quand le Content-Type
+     * renvoyé par le panel est absent ou trompeur, cause plausible du
+     * PARSING_CONTAINER_UNSUPPORTED initial même sans changement d'extension.
+     */
+    private fun startPlayback(uri: String) {
         val mediaItem = MediaItem.Builder()
-            .setUri(channel.streamUrl)
+            .setUri(uri)
+            .apply { mimeTypeForUri(uri)?.let { setMimeType(it) } }
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
                     .setTargetOffsetMs(settings.liveDelaySeconds * 1000L)
