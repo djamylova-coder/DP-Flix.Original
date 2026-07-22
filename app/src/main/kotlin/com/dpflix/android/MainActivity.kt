@@ -3,61 +3,24 @@ package com.dpflix.android
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import com.dpflix.android.splash.SplashScreen
+import com.dpflix.android.nav.DpFlixNavHost
 
 /**
  * Point d'entrée MOBILE (téléphone / tablette, interaction tactile).
  *
- * Étape 2c-2 : la vidéo de splash (§4.1) se lance en premier ; une fois
- * terminée, on retombe sur l'écran "Hello DP-Flix" existant (validé à
- * l'étape 2b), en attendant que l'onboarding/accueil réel soit développé
- * (§7 du cahier des charges). Indépendant du point d'entrée TV
- * ([com.dpflix.android.tv.TvMainActivity]), qui a son propre enchaînement.
+ * Étape 6a : branchée sur le vrai graphe de navigation ([DpFlixNavHost]) — remplace le
+ * banc de test ad hoc de l'étape 5a, désormais intégré au graphe lui-même (voir la doc de
+ * [DpFlixNavHost] pour le détail de cette transition). Indépendant du point d'entrée TV
+ * ([com.dpflix.android.tv.TvMainActivity]), qui garde sa propre UI (Compose for TV,
+ * étape 7) — seule la couche de données ([DpFlixApplication.container]) est partagée
+ * entre les deux points d'entrée.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val appRepository = (application as DpFlixApplication).container.appRepository
         setContent {
-            var splashFinished by remember { mutableStateOf(false) }
-
-            if (splashFinished) {
-                HelloDpFlixMobile()
-            } else {
-                SplashScreen(onSplashFinished = { splashFinished = true })
-            }
-        }
-    }
-}
-
-@Composable
-private fun HelloDpFlixMobile() {
-    MaterialTheme {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Hello DP-Flix — mobile",
-                    color = Color.White
-                )
-            }
+            DpFlixNavHost(appRepository = appRepository)
         }
     }
 }

@@ -21,14 +21,16 @@
         android:required="false" />
 
     <application
+        android:name=".DpFlixApplication"
         android:label="DP-Flix"
         android:allowBackup="true"
-        android:banner="@drawable/tv_banner_placeholder"
-        android:icon="@drawable/ic_launcher_placeholder">
+        android:banner="@drawable/tv_banner"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <!--
-            android:icon / android:banner : placeholders volontaires pour cette étape 2b.
-            Les vraies icônes (adaptive icon mobile) et le banner TV définitif arrivent
-            à l'étape 2c (§7 du cahier des charges), tels que fournis par l'utilisateur.
+            §7 étape 2c-1 du cahier des charges : adaptive icon mobile (mipmap-anydpi-v26,
+            API 26+, avec fallback vecteur combiné mipmap-anydpi pour API 23-25) et
+            banner TV définitif (320x180dp), remplaçant les placeholders de l'étape 2b.
         -->
 
         <!-- Point d'entrée MOBILE (téléphone / tablette, tactile) -->
@@ -46,7 +48,7 @@
         <activity
             android:name=".tv.TvMainActivity"
             android:exported="true"
-            android:banner="@drawable/tv_banner_placeholder"
+            android:banner="@drawable/tv_banner"
             android:theme="@style/Theme.DpFlix">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -65,6 +65,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.activity.compose)
+    implementation(libs.navigation.compose)
 
     // Compose (mobile)
     implementation(platform(libs.compose.bom))
@@ -73,6 +74,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.foundation)
+    implementation(libs.compose.material.icons.extended)
     debugImplementation(libs.compose.ui.tooling)
 
     // Compose for TV
@@ -83,6 +85,7 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.database)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
 
@@ -97,4 +100,8 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Images (logo de la chaîne dans l'OSD, étape 8a)
+    implementation(libs.coil.compose)
 }
