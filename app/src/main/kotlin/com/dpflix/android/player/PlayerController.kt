@@ -35,7 +35,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 
 /**
  * État exposé par [PlayerController] à l'UI (§7 étape 5a : "contrôle basique play/pause/erreur").
@@ -166,7 +165,13 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
         _recentErrors.value = (listOf(entry) + _recentErrors.value).take(RECENT_ERRORS_MAX)
     }
 
-    private val httpDataSourceFactory = OkHttpDataSource.Factory(OkHttpClient())
+    // Fix (2026-07-22) : remplace un `OkHttpClient()` nu, sans User-Agent ni tolérance
+    // TLS, qui faisait de PlayerController le vrai point de blocage des flux rejetés
+    // (voir com.dpflix.android.network.IptvHttpDataSourceFactory pour le détail de la
+    // cascade de User-Agent et du TLS permissif appliqués ici).
+    private val httpDataSourceFactory = OkHttpDataSource.Factory(
+        com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient()
+    )
 
     /**
      * Portée coroutine dédiée au watchdog de blocage (§6, voir plus bas). `SupervisorJob`

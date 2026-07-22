@@ -45,6 +45,12 @@ class XtreamClient(
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
+        // TLS permissif (2026-07-22) : mêmes raisons que IptvHttpDataSourceFactory —
+        // certains panels servent un certificat auto-signé/invalide sur player_api.php
+        // lui-même, ce qui ferait échouer l'authentification avant même d'arriver à la
+        // lecture du flux vidéo. Voir PermissiveTls pour le compromis assumé.
+        .sslSocketFactory(PermissiveTls.sslSocketFactory, PermissiveTls.trustManager)
+        .hostnameVerifier(PermissiveTls.hostnameVerifier)
         .build()
 ) {
 
@@ -149,18 +155,27 @@ class XtreamClient(
     }
 
     private fun executeGet(url: String): GetOutcome = try {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", XTREAM_USER_AGENT)
-            .get()
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                GetOutcome.HttpError(response.code)
-            } else {
-                GetOutcome.Body(response.body?.string().orEmpty())
+        // Cascade de User-Agent (2026-07-22, voir NetworkConstants.USER_AGENT_FALLBACKS) :
+        // remplace l'ancien header unique forcé "IPTVSmartersPlayer" — on essaie d'abord
+        // sans en-tête personnalisé, puis les signatures connues, jusqu'à obtenir une
+        // réponse HTTP réussie. Un panel qui filtre par User-Agent bloque en général de
+        // façon franche (code d'erreur, pas un simple corps vide), donc `isSuccessful`
+        // suffit comme critère pour passer à la tentative suivante.
+        var lastOutcome: GetOutcome = GetOutcome.NetworkError("Aucune tentative effectuée")
+        for (userAgent in NetworkConstants.USER_AGENT_FALLBACKS) {
+            val requestBuilder = Request.Builder().url(url).get()
+            if (userAgent != null) requestBuilder.header("User-Agent", userAgent)
+            val outcome = httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    GetOutcome.HttpError(response.code)
+                } else {
+                    GetOutcome.Body(response.body?.string().orEmpty())
+                }
             }
+            if (outcome is GetOutcome.Body) return@try outcome
+            lastOutcome = outcome
         }
+        lastOutcome
     } catch (e: IOException) {
         GetOutcome.NetworkError(e.message ?: "Erreur réseau")
     } catch (e: IllegalArgumentException) {
@@ -310,26 +325,5 @@ class XtreamClient(
 
     private companion object {
         const val DEFAULT_STREAM_EXTENSION = "m3u8"
-
-        /**
-         * Beaucoup de panels Xtream Codes filtrent les requêtes selon le `User-Agent`
-         * (mesure anti-partage de comptes) : ils acceptent les lecteurs IPTV "reconnus"
-         * et bloquent ou ignorent silencieusement tout le reste — parfois avec un rejet
-         * immédiat (liste vide malgré une authentification valide), parfois avec un
-         * simple silence réseau qui ressemble à un timeout côté client. Sans ce header,
-         * OkHttp envoie sa propre signature ("okhttp/4.x"), aisément reconnaissable et
-         * couramment filtrée.
-         *
-         * "IPTVSmartersPlayer" plutôt que VLC (essayé précédemment, toujours filtré chez
-         * ce panel) : la plupart des panels Xtream font une recherche par sous-chaîne sur
-         * ce header plutôt qu'une correspondance exacte, et IPTV Smarters Pro est l'un des
-         * lecteurs Xtream les plus répandus, donc l'un des plus largement whitelistés.
-         * Aucune source officielle ne documente la chaîne exacte utilisée par l'app
-         * elle-même : celle-ci est la plus couramment rapportée dans la communauté IPTV,
-         * mais si elle ne suffit toujours pas, il faudra en essayer une autre (ex. un
-         * User-Agent Android générique, ou celui d'un autre lecteur très répandu comme
-         * TiviMate ou GSE Smart IPTV).
-         */
-        const val XTREAM_USER_AGENT = "IPTVSmartersPlayer"
     }
 }
