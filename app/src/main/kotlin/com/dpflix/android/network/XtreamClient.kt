@@ -172,8 +172,8 @@ class XtreamClient(
                     GetOutcome.Body(response.body?.string().orEmpty())
                 }
             }
-            if (outcome is GetOutcome.Body) return@try outcome
             lastOutcome = outcome
+            if (outcome is GetOutcome.Body) break
         }
         lastOutcome
     } catch (e: IOException) {
