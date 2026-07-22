@@ -3,6 +3,7 @@ package com.dpflix.android.network
 import com.dpflix.android.model.Channel
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -33,7 +34,18 @@ import org.json.JSONObject
  * - VOD / séries : hors périmètre du projet (§1, §4.2).
  */
 class XtreamClient(
-    private val httpClient: OkHttpClient = OkHttpClient()
+    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        // Défauts OkHttp (10s partout) trop courts pour certains panels Xtream : serveur
+        // distant/surchargé lent à établir la connexion, ou réponse `get_live_streams`
+        // volumineuse (plusieurs milliers de chaînes) lente à transférer intégralement.
+        // `readTimeout` plus généreux que `connectTimeout` : une connexion qui ne
+        // s'établit pas du tout après 20s a très peu de chances d'aboutir (mauvais
+        // port/hôte injoignable), alors qu'une réponse volumineuse peut légitimement
+        // prendre plus longtemps à arriver en totalité une fois la connexion établie.
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .build()
 ) {
 
     /**
@@ -79,7 +91,7 @@ class XtreamClient(
             is GetOutcome.Body -> parseCategories(outcome.text)
         }
 
-        val channels = when (
+        val (channels, rawStreamCount) = when (
             val outcome = executeGet(playerApiUrl(credentials, action = "get_live_streams"))
         ) {
             is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
@@ -91,7 +103,8 @@ class XtreamClient(
         XtreamResult.Success(
             XtreamLiveChannelsData(
                 channels = channels,
-                detectedEpgUrl = buildEpgUrl(credentials)
+                detectedEpgUrl = buildEpgUrl(credentials),
+                rawStreamCount = rawStreamCount
             )
         )
     }
@@ -212,12 +225,12 @@ class XtreamClient(
         credentials: XtreamCredentials,
         playlistId: String,
         categoryNames: Map<String, String>
-    ): List<Channel>? {
+    ): Pair<List<Channel>, Int>? {
         val trimmed = body.trim()
         // Certains panels renvoient "{}" ou une chaîne vide quand le compte n'a
         // simplement aucune chaîne live (plutôt que "[]") : ce n'est pas une erreur.
         if (trimmed.isEmpty() || trimmed == "{}" || trimmed.equals("null", ignoreCase = true)) {
-            return emptyList()
+            return emptyList<Channel>() to 0
         }
 
         val array = try {
@@ -255,7 +268,7 @@ class XtreamClient(
                 originalNumber = obj.optIntFlexible("num").takeIf { it > 0 } ?: sequentialNumber
             )
         }
-        return channels
+        return channels to array.length()
     }
 
     /**

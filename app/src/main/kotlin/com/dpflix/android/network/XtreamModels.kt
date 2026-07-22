@@ -35,7 +35,18 @@ data class XtreamUserInfo(
  */
 data class XtreamLiveChannelsData(
     val channels: List<Channel>,
-    val detectedEpgUrl: String?
+    val detectedEpgUrl: String?,
+    /**
+     * Nombre d'entrées présentes dans le tableau JSON brut renvoyé par le serveur pour
+     * `get_live_streams`, AVANT filtrage — distinct de `channels.size` : permet de
+     * distinguer un compte réellement sans aucune chaîne live (`rawStreamCount == 0`,
+     * valeur de succès légitime) d'un problème de format où le serveur renvoie bien des
+     * entrées mais dont aucune n'a pu être exploitée (`rawStreamCount > 0` alors que
+     * `channels` est vide, ex. champ `stream_id` absent/renommé chez ce panel) — deux
+     * causes très différentes qu'un simple `channels.isEmpty()` ne permettait pas de
+     * distinguer côté appelant (voir [OnboardingViewModel.importXtreamChannels]).
+     */
+    val rawStreamCount: Int
 )
 
 /**

@@ -135,11 +135,30 @@ class OnboardingViewModel(
     private suspend fun importXtreamChannels(credentials: XtreamCredentials, playlist: Playlist): Boolean {
         return when (val channelsResult = xtreamClient.fetchLiveChannels(credentials, playlist.id)) {
             is XtreamResult.Success -> {
-                appRepository.channels.refreshChannels(playlist.id, channelsResult.data.channels)
-                channelsResult.data.detectedEpgUrl?.let { epgUrl ->
-                    appRepository.playlists.updatePlaylist(playlist.copy(autoDetectedEpgUrl = epgUrl))
+                val data = channelsResult.data
+                if (data.channels.isEmpty() && data.rawStreamCount > 0) {
+                    // Le serveur A renvoyé des entrées (rawStreamCount > 0), mais aucune
+                    // n'a pu être exploitée : très probablement un champ inattendu chez ce
+                    // panel (ex. `stream_id` absent/renommé) plutôt qu'un compte
+                    // réellement vide — voir la doc de [XtreamLiveChannelsData.rawStreamCount].
+                    // On persiste quand même la playlist (déjà enregistrée) mais on reste
+                    // sur ce formulaire pour le signaler, plutôt que de silencieusement
+                    // valider un import qui n'a en réalité rien importé.
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = "Le serveur a renvoyé ${data.rawStreamCount} chaîne(s), " +
+                                "mais aucune n'a pu être lue (format inattendu pour ce panel). " +
+                                "Signale ce nombre pour qu'on ajuste l'app."
+                        )
+                    }
+                    false
+                } else {
+                    appRepository.channels.refreshChannels(playlist.id, data.channels)
+                    data.detectedEpgUrl?.let { epgUrl ->
+                        appRepository.playlists.updatePlaylist(playlist.copy(autoDetectedEpgUrl = epgUrl))
+                    }
+                    true
                 }
-                true
             }
             else -> {
                 // Contrairement à avant (erreur silencieusement ignorée) : la playlist
