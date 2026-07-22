@@ -55,6 +55,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    lint {
+        // Le check "NullSafeMutableLiveData" (détecteur NonNullableMutableLiveDataDetector)
+        // plante systématiquement pendant l'analyse Lint avec cette combinaison AGP/Kotlin
+        // (bug connu dans Lint ou l'une de ses dépendances, cf. log de build). Le projet
+        // n'utilise pas androidx.lifecycle.LiveData (Room/DataStore uniquement), donc ce
+        // check n'a de toute façon aucune pertinence ici.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 dependencies {
