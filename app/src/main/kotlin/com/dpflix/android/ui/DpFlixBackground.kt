@@ -3,6 +3,7 @@ package com.dpflix.android.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -32,7 +33,7 @@ import com.dpflix.android.ui.theme.DpFlixColors
 @Composable
 fun DpFlixBackground(
     modifier: Modifier = Modifier,
-    content: @Composable Box.() -> Unit = {}
+    content: @Composable BoxScope.() -> Unit = {}
 ) {
     Box(modifier = modifier.background(DpFlixColors.Background)) {
         Canvas(modifier = Modifier.fillMaxSize()) {

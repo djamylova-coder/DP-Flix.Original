@@ -36,9 +36,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.tv.foundation.lazy.list.TvLazyColumn
-import androidx.tv.foundation.lazy.list.TvLazyRow
-import androidx.tv.foundation.lazy.list.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -62,13 +62,13 @@ import com.dpflix.android.ui.theme.DpFlixColors
  * [com.dpflix.android.nav.DpFlixNavHost]), cet écran fournit désormais toujours de vrais
  * IDs de chaîne.
  *
- * ## Grilles D-pad : `TvLazyColumn`/`TvLazyRow` plutôt que `LazyColumn`/`LazyRow`
- * Catégories empilées verticalement (`TvLazyColumn`), chaînes de chaque catégorie
- * défilant horizontalement (`TvLazyRow` imbriqué) — mêmes composants `tv-foundation`
- * (déclarés en dépendance dès l'étape 2a) que ceux utilisés par les échantillons officiels
- * Compose for TV : contrairement à `LazyRow`/`LazyColumn` (Compose Foundation), ils font
- * défiler automatiquement la liste pour garder l'élément focus visible au D-pad — la
- * `LazyRow` mobile ne le fait pas nativement mais n'en a pas besoin (défilement tactile).
+ * ## Grilles D-pad : `LazyColumn`/`LazyRow` (Compose Foundation standard)
+ * Catégories empilées verticalement (`LazyColumn`), chaînes de chaque catégorie
+ * défilant horizontalement (`LazyRow` imbriqué). Les composants `TvLazyColumn`/`TvLazyRow`
+ * de `tv-foundation`, utilisés jusqu'à l'étape 10, ont été dépréciés puis retirés par
+ * Google : depuis Compose Foundation 1.7+ (stable en 1.8+), `LazyColumn`/`LazyRow`
+ * intègrent nativement le même comportement (faire défiler la liste pour garder l'élément
+ * focus visible au D-pad) — voir la doc officielle "Create scrollable layouts for TV".
  *
  * ## Focus initial
  * Posé sur la toute première carte de chaîne de la première catégorie non vide dès que
@@ -233,7 +233,7 @@ private fun ChannelCategoryListTv(
     val firstFocusableChannelId = categories.firstOrNull { it.channels.isNotEmpty() }
         ?.channels?.firstOrNull()?.id
 
-    TvLazyColumn(
+    LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp)
@@ -252,7 +252,7 @@ private fun ChannelCategoryListTv(
     }
 }
 
-/** Une rangée horizontale (§4.4 "style Netflix"), défilement D-pad via `TvLazyRow`. */
+/** Une rangée horizontale (§4.4 "style Netflix"), défilement D-pad via `LazyRow`. */
 @Composable
 private fun CategoryRowTv(
     category: ChannelCategory,
@@ -268,7 +268,7 @@ private fun CategoryRowTv(
             fontSize = 20.sp,
             modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp)
         )
-        TvLazyRow(
+        LazyRow(
             contentPadding = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {

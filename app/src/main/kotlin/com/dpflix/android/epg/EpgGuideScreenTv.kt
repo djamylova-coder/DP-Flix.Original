@@ -33,9 +33,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.tv.foundation.lazy.list.TvLazyColumn
-import androidx.tv.foundation.lazy.list.TvLazyRow
-import androidx.tv.foundation.lazy.list.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -63,8 +63,9 @@ import java.util.Locale
  * la doc de [com.dpflix.android.home.HomeScreenTv]), une cellule de programme est un
  * simple bloc titre + horaires sans contenu vidéo embarqué : un `Button` `tv-material3`
  * suffit, avec le même bénéfice qu'ailleurs dans l'app (ex. `ChannelCardTv`) — focus/clic
- * D-pad natifs, `TvLazyRow` fait automatiquement défiler la ligne pour garder la cellule
- * focus visible.
+ * D-pad natifs, `LazyRow` (Compose Foundation standard depuis la version 1.7+, en
+ * remplacement du `TvLazyRow` de `tv-foundation` déprécié par Google) fait automatiquement
+ * défiler la ligne pour garder la cellule focus visible.
  *
  * ## `AlertDialog` réutilisé tel quel pour le détail programme
  * Comme dans `SettingsScreenTv` (voir sa doc sur `Switch`/`RadioButton`/`AlertDialog` :
@@ -81,7 +82,7 @@ import java.util.Locale
  * ## Positionnement initial sur "maintenant" : hors périmètre côté TV
  * Contrairement au mobile ([EpgGuideScreen], qui saute directement sur le programme en
  * cours à l'ouverture d'une ligne car rien d'autre ne l'y amène), le D-pad amène déjà
- * l'utilisateur cellule par cellule et `TvLazyRow` garde la cellule focus visible pendant
+ * l'utilisateur cellule par cellule et `LazyRow` garde la cellule focus visible pendant
  * la navigation (voir la doc de [com.dpflix.android.home.HomeScreenTv] sur ce
  * comportement) : un saut automatique supplémentaire entrerait en conflit avec le focus
  * initial standard de l'écran (posé sur "Retour", pas sur une cellule de programme — voir
@@ -213,7 +214,7 @@ private fun EpgGuideRowsTv(
     onProgramClick: (channelName: String, program: EpgProgram) -> Unit,
     onChannelClick: (channel: Channel) -> Unit
 ) {
-    TvLazyColumn(
+    LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -262,7 +263,7 @@ private fun EpgGuideRowItemTv(
                 modifier = Modifier.padding(start = 12.dp)
             )
         } else {
-            TvLazyRow(
+            LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(start = 12.dp)
             ) {

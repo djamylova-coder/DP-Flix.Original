@@ -43,8 +43,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.tv.foundation.lazy.list.TvLazyColumn
-import androidx.tv.foundation.lazy.list.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -237,7 +237,7 @@ private fun SectionListBodyTv(firstItemFocusRequester: FocusRequester, onSelect:
         SettingsSection.Epg,
         SettingsSection.Diagnostic
     )
-    TvLazyColumn(
+    LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -589,7 +589,7 @@ private fun PlaylistsSectionBodyTv(
                 Text(text = "Aucune playlist enregistrée.", color = DpFlixColors.OnBackgroundMuted, fontSize = 18.sp)
             }
         } else {
-            TvLazyColumn(
+            LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -744,7 +744,7 @@ private fun ChannelNumberingSectionBodyTv(
 
     val selectedId = uiState.numberingPlaylistId ?: uiState.activePlaylist?.id
 
-    TvLazyColumn(modifier = Modifier.fillMaxSize()) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
         item {
             PlaylistSelectorChipsTv(
                 playlists = uiState.playlists,
