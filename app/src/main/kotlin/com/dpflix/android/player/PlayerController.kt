@@ -20,7 +20,7 @@ import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import com.dpflix.android.model.Channel
 import com.dpflix.android.repository.SettingsRepository
 import com.dpflix.android.settings.DiagnosticErrorEntry
@@ -301,7 +301,7 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
      * la connexion Xtream elle-même, get_live_streams compris, fonctionne déjà).
      */
     private val extractorsFactory = DefaultExtractorsFactory()
-        .setTsExtractorFlags(TsExtractor.FLAG_ALLOW_NON_IDR_KEYFRAMES)
+        .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES)
 
     /**
      * `DefaultMediaSourceFactory` détecte HLS automatiquement (extension `.m3u8` ou
