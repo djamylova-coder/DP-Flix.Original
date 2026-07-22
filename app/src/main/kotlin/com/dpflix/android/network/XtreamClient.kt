@@ -149,7 +149,11 @@ class XtreamClient(
     }
 
     private fun executeGet(url: String): GetOutcome = try {
-        val request = Request.Builder().url(url).get().build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", XTREAM_USER_AGENT)
+            .get()
+            .build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 GetOutcome.HttpError(response.code)
@@ -306,5 +310,26 @@ class XtreamClient(
 
     private companion object {
         const val DEFAULT_STREAM_EXTENSION = "m3u8"
+
+        /**
+         * Beaucoup de panels Xtream Codes filtrent les requêtes selon le `User-Agent`
+         * (mesure anti-partage de comptes) : ils acceptent les lecteurs IPTV "reconnus"
+         * et bloquent ou ignorent silencieusement tout le reste — parfois avec un rejet
+         * immédiat (liste vide malgré une authentification valide), parfois avec un
+         * simple silence réseau qui ressemble à un timeout côté client. Sans ce header,
+         * OkHttp envoie sa propre signature ("okhttp/4.x"), aisément reconnaissable et
+         * couramment filtrée.
+         *
+         * "IPTVSmartersPlayer" plutôt que VLC (essayé précédemment, toujours filtré chez
+         * ce panel) : la plupart des panels Xtream font une recherche par sous-chaîne sur
+         * ce header plutôt qu'une correspondance exacte, et IPTV Smarters Pro est l'un des
+         * lecteurs Xtream les plus répandus, donc l'un des plus largement whitelistés.
+         * Aucune source officielle ne documente la chaîne exacte utilisée par l'app
+         * elle-même : celle-ci est la plus couramment rapportée dans la communauté IPTV,
+         * mais si elle ne suffit toujours pas, il faudra en essayer une autre (ex. un
+         * User-Agent Android générique, ou celui d'un autre lecteur très répandu comme
+         * TiviMate ou GSE Smart IPTV).
+         */
+        const val XTREAM_USER_AGENT = "IPTVSmartersPlayer"
     }
 }
