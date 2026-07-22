@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -20,6 +19,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.TsExtractor
 import com.dpflix.android.model.Channel
 import com.dpflix.android.repository.SettingsRepository
 import com.dpflix.android.settings.DiagnosticErrorEntry
@@ -188,24 +189,32 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     /** Dernière chaîne demandée via [playChannel], nécessaire au rechargement complet du watchdog. */
     private var currentChannel: Channel? = null
 
-    // Fix (2026-07-22, second passage) : plusieurs panels Xtream annoncent un
-    // container_extension (m3u8 ou ts) qui ne correspond pas a ce qu'ils servent
-    // reellement sur cette URL. DefaultMediaSourceFactory route le MediaSource a
-    // construire (HLS vs progressif/TS) sur la seule extension de l'URI : si le contenu
-    // reel ne correspond pas a ce que l'extension promettait, aucun extracteur ne sait
-    // le lire -> PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED.
-    private var containerFallbackAttempted = false
+    // Fix (2026-07-22, second passage, étendu au quatrième passage) : plusieurs panels
+    // Xtream annoncent un container_extension (m3u8 ou ts) qui ne correspond pas à ce
+    // qu'ils servent réellement sur cette URL — ou servent parfois le flux sans même
+    // exiger d'extension. DefaultMediaSourceFactory route le MediaSource à construire
+    // (HLS vs progressif/TS) sur l'extension de l'URI : si le contenu réel ne correspond
+    // pas à ce que l'extension promettait, aucun extracteur ne sait le lire ->
+    // PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED.
+    //
+    // `null` = aucune tentative de repli encore construite pour la chaîne en cours ;
+    // liste vide = repli déjà tenté sur toutes les variantes plausibles, plus rien à
+    // essayer. Distinct d'un simple Boolean (troisième passage) pour pouvoir chaîner
+    // plusieurs tentatives successives, pas une seule.
+    private var containerFallbackQueue: MutableList<String>? = null
 
-    private fun alternateContainerUri(uri: String): String? = when {
-        uri.endsWith(".m3u8", ignoreCase = true) -> uri.dropLast(5) + ".ts"
-        uri.endsWith(".ts", ignoreCase = true) -> uri.dropLast(3) + ".m3u8"
-        else -> null
-    }
-
-    private fun mimeTypeForUri(uri: String): String? = when {
-        uri.endsWith(".m3u8", ignoreCase = true) -> MimeTypes.APPLICATION_M3U8
-        uri.endsWith(".ts", ignoreCase = true) -> MimeTypes.VIDEO_MP2T
-        else -> null
+    /**
+     * Variantes plausibles de [uri] à essayer si le format annoncé par le panel s'avère
+     * faux (voir doc de [containerFallbackQueue]) : extension opposée (m3u8 ↔ ts), puis
+     * l'URL nue sans aucune extension — certains panels Xtream servent le flux à
+     * `/live/user/pass/id` directement, sans que l'extension ait jamais été nécessaire.
+     * Si [uri] ne porte déjà aucune extension reconnue, on tente l'inverse : ajouter
+     * `.m3u8` puis `.ts`.
+     */
+    private fun containerFallbackCandidates(uri: String): List<String> = when {
+        uri.endsWith(".m3u8", ignoreCase = true) -> listOf(uri.dropLast(5) + ".ts", uri.dropLast(5))
+        uri.endsWith(".ts", ignoreCase = true) -> listOf(uri.dropLast(3) + ".m3u8", uri.dropLast(3))
+        else -> listOf("$uri.m3u8", "$uri.ts")
     }
 
     /**
@@ -279,16 +288,36 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     }
 
     /**
+     * Fix (2026-07-22, troisième passage) : `FLAG_ALLOW_NON_IDR_KEYFRAMES` sur
+     * l'extracteur TS — de nombreux panels Xtream (surtout gratuits/revendeurs)
+     * servent un flux MPEG-TS live continu qui ne démarre pas forcément sur une
+     * image-clé IDR (le lecteur "rejoint" un flux déjà en cours, sans redécoupage
+     * proprement aligné comme le ferait un vrai encodeur HLS). Par défaut,
+     * l'extracteur TS de Media3 attend une IDR pour démarrer et rejette le flux
+     * comme "conteneur non supporté" s'il n'en trouve pas dans la fenêtre initiale
+     * qu'il inspecte — alors que le flux est un TS par ailleurs parfaitement valide.
+     * Ce drapeau lève cette exigence stricte, seule vraie cause plausible d'un rejet
+     * systématique sur toutes les chaînes/tous les panels (cohérent avec le fait que
+     * la connexion Xtream elle-même, get_live_streams compris, fonctionne déjà).
+     */
+    private val extractorsFactory = DefaultExtractorsFactory()
+        .setTsExtractorFlags(TsExtractor.FLAG_ALLOW_NON_IDR_KEYFRAMES)
+
+    /**
      * `DefaultMediaSourceFactory` détecte HLS automatiquement (extension `.m3u8` ou
      * content-type de la réponse) grâce à `media3-exoplayer-hls` sur le classpath —
      * aucun `HlsMediaSource.Factory` explicite n'est donc nécessaire ici.
      *
      * `setLoadErrorHandlingPolicy` (§6 "retries automatiques sur segments/manifeste/
      * niveaux avant tout arrêt visible", étape 5d) : voir [ResilientLoadErrorHandlingPolicy].
+     *
+     * `extractorsFactory` explicite (au lieu du `DefaultExtractorsFactory()` implicite
+     * par défaut) : seul moyen de faire passer `FLAG_ALLOW_NON_IDR_KEYFRAMES` jusqu'à
+     * l'extracteur TS réellement utilisé pour le flux progressif (voir juste au-dessus).
      */
     val exoPlayer: ExoPlayer = ExoPlayer.Builder(context)
         .setMediaSourceFactory(
-            DefaultMediaSourceFactory(dataSourceFactory)
+            DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
                 .setLoadErrorHandlingPolicy(ResilientLoadErrorHandlingPolicy())
         )
         .setTrackSelector(trackSelector)
@@ -309,24 +338,27 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    // Fix (2026-07-22, second passage) : PARSING_CONTAINER_UNSUPPORTED sur
-                    // un flux Xtream signifie très probablement que l'extension utilisée
-                    // dans l'URL (.m3u8/.ts, voir XtreamClient.buildStreamUrl) ne
-                    // correspond pas à ce que le panel sert réellement à cette adresse.
-                    // Une seule bascule automatique vers l'autre extension avant
-                    // d'abandonner (voir containerFallbackAttempted) : si ça marche,
-                    // l'utilisateur ne voit jamais l'erreur ; sinon, le flux est
-                    // réellement injouable et l'erreur fatale s'affiche normalement.
+                    // Fix (2026-07-22, second passage, étendu au quatrième) :
+                    // PARSING_CONTAINER_UNSUPPORTED sur un flux Xtream signifie très
+                    // probablement que l'extension/le format annoncé par l'URL (voir
+                    // XtreamClient.buildStreamUrl) ne correspond pas à ce que le panel
+                    // sert réellement à cette adresse. Cascade automatique à travers
+                    // [containerFallbackCandidates] (extension opposée, puis URL nue)
+                    // avant d'abandonner : si l'une des variantes marche, l'utilisateur
+                    // ne voit jamais l'erreur ; sinon, une fois la cascade épuisée, le
+                    // flux est réellement injouable et l'erreur fatale s'affiche
+                    // normalement.
                     val channel = currentChannel
                     if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
-                        !containerFallbackAttempted &&
                         channel != null
                     ) {
-                        val altUri = alternateContainerUri(channel.streamUrl)
-                        if (altUri != null) {
-                            containerFallbackAttempted = true
-                            appendRecentError("${error.errorCodeName} - nouvelle tentative avec un autre conteneur")
-                            startPlayback(altUri)
+                        val queue = containerFallbackQueue
+                            ?: containerFallbackCandidates(channel.streamUrl).toMutableList()
+                                .also { containerFallbackQueue = it }
+                        if (queue.isNotEmpty()) {
+                            val nextUri = queue.removeAt(0)
+                            appendRecentError("${error.errorCodeName} - nouvelle tentative avec un autre format (${queue.size} restante(s))")
+                            startPlayback(nextUri)
                             return
                         }
                     }
@@ -526,11 +558,11 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
         _segmentsSucceeded.value = 0
         _segmentsFailed.value = 0
         _recentErrors.value = emptyList()
-        // Fix (2026-07-22, second passage) : nouvelle chaîne = nouvel essai autorisé côté
-        // fallback de conteneur (voir containerFallbackAttempted/onPlayerError) ; sans ce
-        // reset, une chaîne qui a déjà basculé une fois resterait bloquée sans seconde
-        // chance sur un zap ultérieur vers une autre chaîne.
-        containerFallbackAttempted = false
+        // Fix (2026-07-22, second passage, étendu au quatrième) : nouvelle chaîne =
+        // nouvelle cascade de repli autorisée (voir containerFallbackQueue/onPlayerError) ;
+        // sans ce reset, une chaîne qui a déjà épuisé sa cascade resterait bloquée sans
+        // seconde chance sur un zap ultérieur vers une autre chaîne.
+        containerFallbackQueue = null
         scheduleWatchdog()
         startPlayback(channel.streamUrl)
     }
@@ -542,15 +574,17 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
      * qualités/métriques/watchdog — celle-ci n'a de sens que pour un vrai changement de
      * chaîne, pas pour une nouvelle tentative sur la même chaîne avec une autre extension.
      *
-     * `setMimeType` explicite (déduit de [mimeTypeForUri]) plutôt que de laisser
-     * `DefaultMediaSourceFactory` deviner seul : lève l'ambiguïté quand le Content-Type
-     * renvoyé par le panel est absent ou trompeur, cause plausible du
-     * PARSING_CONTAINER_UNSUPPORTED initial même sans changement d'extension.
+     * Fix (2026-07-22, troisième passage) : suppression du `setMimeType` explicite
+     * (auparavant déduit de [mimeTypeForUri]). Forcer le type MIME d'après l'extension
+     * empêchait `DefaultMediaSourceFactory` de faire son propre sniffing tolérant du
+     * contenu réel — sur un panel qui annonce mal son format (`container_extension`
+     * trompeur), forcer était strictement pire que laisser deviner. Combiné à
+     * [extractorsFactory] ci-dessus (tolérance TS), ça couvre mieux les deux causes
+     * réelles observées : format mal annoncé ET flux TS live sans IDR initiale.
      */
     private fun startPlayback(uri: String) {
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
-            .apply { mimeTypeForUri(uri)?.let { setMimeType(it) } }
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
                     .setTargetOffsetMs(settings.liveDelaySeconds * 1000L)
