@@ -85,6 +85,7 @@ class XtreamClient(
             is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
             is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
             is GetOutcome.Body -> parseLiveStreams(outcome.text, credentials, playlistId, categoryNames)
+                ?: return@withContext XtreamResult.ServerError(unparsableStreamsMessage(outcome.text))
         }
 
         XtreamResult.Success(
@@ -211,11 +212,24 @@ class XtreamClient(
         credentials: XtreamCredentials,
         playlistId: String,
         categoryNames: Map<String, String>
-    ): List<Channel> {
-        val array = try {
-            JSONArray(body)
-        } catch (e: JSONException) {
+    ): List<Channel>? {
+        val trimmed = body.trim()
+        // Certains panels renvoient "{}" ou une chaîne vide quand le compte n'a
+        // simplement aucune chaîne live (plutôt que "[]") : ce n'est pas une erreur.
+        if (trimmed.isEmpty() || trimmed == "{}" || trimmed.equals("null", ignoreCase = true)) {
             return emptyList()
+        }
+
+        val array = try {
+            JSONArray(trimmed)
+        } catch (e: JSONException) {
+            // Le serveur peut répondre par un objet JSON (page d'erreur/auth du panel,
+            // action non reconnue...) plutôt qu'un tableau, ou par du HTML/texte brut
+            // (mauvais port, reverse-proxy, etc.) : dans les deux cas, ce n'est PAS la
+            // même chose qu'"aucune chaîne" et l'appelant doit pouvoir le distinguer
+            // (voir [XtreamClient.fetchLiveChannels]) plutôt que de recevoir silencieusement
+            // une liste vide indiscernable d'un compte réellement sans chaîne.
+            return null
         }
 
         val channels = mutableListOf<Channel>()
@@ -242,6 +256,18 @@ class XtreamClient(
             )
         }
         return channels
+    }
+
+    /**
+     * Message d'erreur affiché quand `get_live_streams` ne renvoie pas un JSON
+     * exploitable : inclut un extrait de la réponse brute pour permettre à
+     * l'utilisateur (ou à nous, en debug) d'identifier la vraie cause (page d'erreur
+     * HTML du panel, mauvais port, action bloquée par un reverse-proxy...) plutôt que
+     * de se retrouver avec un simple "0 chaînes" sans explication.
+     */
+    private fun unparsableStreamsMessage(rawBody: String): String {
+        val snippet = rawBody.trim().take(120).ifBlank { "(réponse vide)" }
+        return "Réponse du serveur illisible pour la liste des chaînes : $snippet"
     }
 
     private fun baseUrl(server: String): String = server.trim().trimEnd('/')

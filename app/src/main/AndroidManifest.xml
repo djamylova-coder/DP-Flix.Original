@@ -26,6 +26,7 @@
         android:allowBackup="true"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round">
         <!--
             §7 étape 2c-1 du cahier des charges : adaptive icon mobile (mipmap-anydpi-v26,

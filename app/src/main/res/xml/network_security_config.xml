@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    De nombreux panels Xtream Codes / serveurs IPTV ne sont exposés qu'en HTTP simple
+    (pas de certificat TLS). Depuis Android 9 (API 28), le trafic HTTP en clair est
+    bloqué par défaut ("CLEARTEXT communication ... not permitted by network security
+    policy") : cette config l'autorise explicitement pour tout domaine, puisque
+    l'utilisateur saisit lui-même l'adresse de son serveur (§4.2) et qu'on ne peut pas
+    connaître à l'avance s'il sera en HTTP ou HTTPS.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
