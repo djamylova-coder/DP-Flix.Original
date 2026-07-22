@@ -1,5 +1,6 @@
 package com.dpflix.android.network
 
+import android.content.Context
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
@@ -87,14 +88,12 @@ object IptvHttpDataSourceFactory {
      */
     fun httpClient(): OkHttpClient = okHttpClient
 
-    /** DataSource.Factory à passer à HlsMediaSource.Factory (ou tout MediaSource.Factory Media3). */
-    fun create(): DataSource.Factory {
+    /** DataSource.Factory à passer à HlsMediaSource.Factory (ou tout MediaSource.Factory Media3).
+     *  Context requis par DefaultDataSource.Factory (type non-nullable côté Media3) pour la
+     *  gestion des schémas non-HTTP (fichiers locaux, assets). */
+    fun create(context: Context): DataSource.Factory {
         val httpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
-
-        // DefaultDataSource ajoute la gestion des schémas non-HTTP (fichiers locaux,
-        // assets) autour du HttpDataSource — voir note d'intégration ci-dessous pour le
-        // Context requis dès que le cache disque (étape 5c) est câblé ici.
-        return DefaultDataSource.Factory(/* context = */ null, httpDataSourceFactory)
+        return DefaultDataSource.Factory(context, httpDataSourceFactory)
     }
 
     /**
@@ -114,7 +113,7 @@ object IptvHttpDataSourceFactory {
 }
 
 /*
- * `create()`/`loadErrorHandlingPolicy()` ci-dessus restent utilisables tels quels si un
+ * `create(context)`/`loadErrorHandlingPolicy()` ci-dessus restent utilisables tels quels si un
  * jour un `HlsMediaSource.Factory` explicite est construit ailleurs dans le projet, mais
  * ne sont PAS le chemin réellement emprunté aujourd'hui : voir le README du correctif —
  * c'est `PlayerController.httpDataSourceFactory`, avec `DefaultMediaSourceFactory` et
