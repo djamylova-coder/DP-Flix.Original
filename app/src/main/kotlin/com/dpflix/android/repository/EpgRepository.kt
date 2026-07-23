@@ -83,6 +83,16 @@ class EpgRepository(context: Context) {
         cache.remove(playlistId)
     }
 
+    /** Vide tout le cache (toutes playlists confondues). À appeler par
+     *  [com.dpflix.android.repository.AppRepository.resetAll] lors d'une réinitialisation
+     *  complète (§5.6) : sans ça, les guides EPG des playlists supprimées restaient en
+     *  mémoire pour des `playlistId` qui n'existent plus (orphelins, mémoire non libérée -
+     *  sans impact visible puisque les nouvelles playlists ont de nouveaux id, mais autant
+     *  repartir sur un cache propre). */
+    fun clearAll() {
+        cache.clear()
+    }
+
     private suspend fun load(playlist: Playlist): EpgLoadResult {
         val bytes = loadRawBytes(playlist).getOrElse { error ->
             return EpgLoadResult.Unavailable(error.message ?: "Erreur inconnue")

@@ -18,17 +18,22 @@ class AppRepository(
 
     /**
      * Réinitialisation complète (§5.6 "Réinitialisation complète") : playlists + chaînes
-     * (cascade FK, 4b) + réglages globaux (4c).
+     * (cascade FK, 4b) + réglages globaux (4c) + cache mémoire EPG (9a).
      *
      * Ne vide **pas** le cache disque ExoPlayer (`MediaCacheProvider`, existe depuis
      * l'étape 5c) : ce module vit dans le package `player`, qui ne dépend aujourd'hui de
      * rien dans `repository` — lui faire l'inverse ici inverserait cette dépendance sans
      * réel besoin. C'est donc l'appelant (`SettingsViewModel.confirmReset`, étape 6d) qui
      * orchestre les deux appels côte à côte.
+     *
+     * Fix (2026-07-23) : `epg.clearAll()` ajouté — sans lui, les guides EPG restaient en
+     * cache mémoire pour des `playlistId` qui n'existent plus après la suppression des
+     * playlists (orphelins sans impact visible, juste de la mémoire non libérée).
      */
     suspend fun resetAll() {
         playlists.deleteAll()
         settings.resetAll()
+        epg.clearAll()
     }
 
     /**
