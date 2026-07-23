@@ -7,7 +7,6 @@ import com.dpflix.android.parser.EpgXmlParser
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
@@ -47,7 +46,11 @@ import okhttp3.Request
 class EpgRepository(context: Context) {
 
     private val appContext = context.applicationContext
-    private val httpClient = OkHttpClient()
+
+    // Fix (2026-07-23) : même correctif que OnboardingViewModel.httpClient — voir sa
+    // doc. Un guide EPG servi par le même panel que la playlist peut être bloqué par les
+    // mêmes causes (certificat auto-signé, filtrage du User-Agent par défaut d'OkHttp).
+    private val httpClient = com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient()
 
     /** Un seul résultat en cache par playlist — pas d'accès concurrent complexe attendu
      *  (mono-utilisateur, mono-appareil), une `Map` mutable simple suffit. */

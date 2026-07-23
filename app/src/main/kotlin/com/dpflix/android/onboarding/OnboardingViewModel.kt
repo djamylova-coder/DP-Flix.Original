@@ -47,7 +47,16 @@ class OnboardingViewModel(
     private val appRepository: AppRepository,
     private val appContext: Context,
     private val xtreamClient: XtreamClient = XtreamClient(),
-    private val httpClient: OkHttpClient = OkHttpClient()
+    // Fix (2026-07-23) : un OkHttpClient() nu ici ne bénéficiait ni du TLS permissif
+    // (panels HTTPS à certificat auto-signé) ni de la cascade de User-Agent
+    // (com.dpflix.android.network.NetworkConstants.USER_AGENT_FALLBACKS), déjà en place
+    // pour XtreamClient et la lecture vidéo (voir IptvHttpDataSourceFactory) depuis le
+    // correctif du 2026-07-22 — alors que c'est justement ce même client qui télécharge
+    // la playlist M3U elle-même : un panel qui filtre le User-Agent par défaut d'OkHttp,
+    // ou sert un certificat auto-signé sur l'URL de playlist, faisait donc échouer le
+    // téléchargement AVANT même d'arriver au parsing/à la lecture des flux HLS/TS,
+    // quel que soit le schéma (http:// ou https://).
+    private val httpClient: OkHttpClient = com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
