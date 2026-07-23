@@ -127,7 +127,15 @@ class XtreamClient(
         containerExtension: String = DEFAULT_STREAM_EXTENSION
     ): String {
         val ext = containerExtension.trim().trimStart('.').ifBlank { DEFAULT_STREAM_EXTENSION }
-        return "${baseUrl(credentials.serverUrl)}/live/${encode(credentials.username)}/${encode(credentials.password)}/$streamId.$ext"
+        // Fix (2026-07-23) : encodePathSegment (Uri.encode), pas encode (URLEncoder) - ici
+        // username/password sont inseres dans le CHEMIN de l'URL (/live/{user}/{pass}/...),
+        // pas une query string. URLEncoder.encode encode un espace en "+", valide seulement
+        // en query string (application/x-www-form-urlencoded) - dans un segment de chemin,
+        // ce "+" reste un caractere litteral pour la plupart des serveurs, jamais decode en
+        // espace : un identifiant Xtream contenant un espace ou certains caracteres
+        // speciaux produisait donc une URL de flux invalide (chaine injouable), alors que
+        // playerApiUrl/buildEpgUrl (query strings) n'etaient eux pas concernes.
+        return "${baseUrl(credentials.serverUrl)}/live/${encodePathSegment(credentials.username)}/${encodePathSegment(credentials.password)}/$streamId.$ext"
     }
 
     /**
@@ -169,7 +177,10 @@ class XtreamClient(
                 if (!response.isSuccessful) {
                     GetOutcome.HttpError(response.code)
                 } else {
-                    GetOutcome.Body(response.body?.string().orEmpty())
+                    val body = response.body
+                    val bytes = body?.bytes() ?: ByteArray(0)
+                    val declaredCharset = RobustTextDecoder.charsetFromContentType(body?.contentType()?.toString())
+                    GetOutcome.Body(RobustTextDecoder.decode(bytes, declaredCharset))
                 }
             }
             lastOutcome = outcome
@@ -302,9 +313,34 @@ class XtreamClient(
         return "Réponse du serveur illisible pour la liste des chaînes : $snippet"
     }
 
-    private fun baseUrl(server: String): String = server.trim().trimEnd('/')
+    // Fix (robustesse "n'importe quel panel") : beaucoup d'utilisateurs collent une
+    // adresse de serveur sans schéma ("monpanel.com:8080") ou en copiant carrément un
+    // lien complet déjà fourni par leur revendeur (avec /player_api.php, /get.php ou une
+    // query string en trop) — sans schéma, OkHttp lève IllegalArgumentException avant
+    // même la première requête ("expected scheme") ; avec un chemin/une query en trop,
+    // playerApiUrl produirait une URL invalide (double player_api.php, ?username=...
+    // dupliqué). On normalise donc une bonne fois ici, seul point de passage commun à
+    // authenticate/fetchLiveChannels/buildStreamUrl/buildEpgUrl.
+    private fun baseUrl(server: String): String {
+        var normalized = server.trim().trimEnd('/')
+        // Schéma manquant : http:// par défaut (le cas très largement majoritaire pour
+        // ces panels ; l'utilisateur reste libre de saisir explicitement https://).
+        if (!normalized.contains("://")) {
+            normalized = "http://$normalized"
+        }
+        // Retire un chemin d'API ou une query string collés par erreur avec l'hôte,
+        // pour ne garder que schéma+hôte+port.
+        normalized = normalized.substringBefore("?")
+        normalized = Regex("""(?i)/(player_api|get)\.php.*$""").replace(normalized, "")
+        return normalized.trimEnd('/')
+    }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    /** Encodage correct pour un segment de CHEMIN d'URL (contrairement à [encode], prévu
+     *  pour une query string) - voir la doc de [buildStreamUrl] pour le bug que ça corrige.
+     *  `android.net.Uri.encode` encode un espace en "%20", jamais en "+". */
+    private fun encodePathSegment(value: String): String = android.net.Uri.encode(value)
 
     /** Lit un champ pouvant être un `Int`, un `Boolean` ou une `String` selon le panel Xtream. */
     private fun JSONObject.optIntFlexible(key: String): Int {

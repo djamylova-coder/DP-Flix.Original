@@ -246,6 +246,12 @@ class OnboardingViewModel(
         }
     }
 
+    // Fix (robustesse "n'importe quel caractère spécial") : `response.body?.string()`
+    // décode toujours en UTF-8 par défaut quand le Content-Type ne déclare pas de
+    // charset (cas très courant chez les panels IPTV) — un contenu réellement en
+    // Windows-1252/ISO-8859-1 (noms de chaîne accentués) en ressortait corrompu sans
+    // aucune erreur visible. On lit les octets bruts et on laisse [RobustTextDecoder]
+    // décider (BOM explicite, charset déclaré, ou détection UTF-8/Windows-1252).
     private suspend fun downloadM3u(url: String): Result<String> = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url(url).get().build()
@@ -253,7 +259,11 @@ class OnboardingViewModel(
                 if (!response.isSuccessful) {
                     Result.failure(IOException("Le serveur a répondu avec le code ${response.code}"))
                 } else {
-                    Result.success(response.body?.string().orEmpty())
+                    val body = response.body
+                    val bytes = body?.bytes() ?: ByteArray(0)
+                    val declaredCharset = com.dpflix.android.network.RobustTextDecoder
+                        .charsetFromContentType(body?.contentType()?.toString())
+                    Result.success(com.dpflix.android.network.RobustTextDecoder.decode(bytes, declaredCharset))
                 }
             }
         } catch (e: IOException) {
@@ -273,8 +283,13 @@ class OnboardingViewModel(
     private suspend fun copyLocalFileToPrivateStorage(playlistId: String, uri: Uri): Result<Pair<String, String>> =
         withContext(Dispatchers.IO) {
             try {
-                val text = appContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                // Fix (robustesse "n'importe quel caractère spécial") : même raison que
+                // [downloadM3u] — `bufferedReader()` décode en UTF-8 par défaut, un
+                // fichier .m3u exporté en Windows-1252 (courant depuis des outils
+                // Windows) en ressortait corrompu sans erreur visible.
+                val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     ?: return@withContext Result.failure(IOException("Impossible de lire le fichier sélectionné"))
+                val text = com.dpflix.android.network.RobustTextDecoder.decode(bytes)
                 val dir = File(appContext.filesDir, "playlists").apply { mkdirs() }
                 val target = File(dir, "$playlistId.m3u")
                 target.writeText(text)
