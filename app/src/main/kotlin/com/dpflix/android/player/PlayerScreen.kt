@@ -1,6 +1,8 @@
 package com.dpflix.android.player
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.database.ContentObserver
 import android.media.AudioManager
 import android.os.Handler
@@ -36,8 +38,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.ui.PlayerView
 import com.dpflix.android.settings.SettingsScreen
 import com.dpflix.android.model.Channel
@@ -177,6 +183,7 @@ fun PlayerScreen(
     onRequestFullReset: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val coroutineScope = rememberCoroutineScope()
     var controller by remember(channel.id) { mutableStateOf<PlayerController?>(null) }
     var playerView by remember(channel.id) { mutableStateOf<PlayerView?>(null) }
@@ -320,7 +327,12 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(channel.id) {
-        val created = PlayerController.create(context)
+        // Fix (2026-07-24) : récupère la playlist propriétaire de cette chaîne pour que
+        // son éventuel forçage réseau (Referer/User-Agent/proxy, voir Playlist) soit
+        // appliqué — `null` si absente (chaîne orpheline) ou si aucun appRepository
+        // n'est fourni (mini-lecteur), même comportement automatique qu'avant dans ce cas.
+        val playlist = appRepository?.playlists?.getById(channel.playlistId)
+        val created = PlayerController.create(context, playlist = playlist)
         created.playChannel(channel)
         controller = created
     }
@@ -467,6 +479,38 @@ fun PlayerScreen(
         }
     }
 
+    // Mode immersif reel (paragraphe 4.5) : uniquement en plein ecran (osdEnabled),
+    // jamais pour le mini-lecteur (voir la doc de la fonction sur osdEnabled - y activer
+    // ceci masquerait les barres systeme derriere l'accueil, sans rapport avec un simple
+    // apercu en tete d'ecran). Cle Unit plutot que channel.id : le param channel (entree
+    // de navigation) ne change pas pendant le zapping (voir la doc de la fonction), donc
+    // ce DisposableEffect s'installe une seule fois a l'entree en plein ecran et se
+    // demonte a la sortie - pas besoin de le relancer a chaque zap.
+    //
+    // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE (plutot que BEHAVIOR_DEFAULT) : un balayage
+    // depuis le bord fait reapparaitre temporairement les barres, comme sur un lecteur
+    // video standard, sans qu'un tap ailleurs ne les fasse revenir "en dur" a la place de
+    // toggleOsd() ci-dessus.
+    //
+    // Necessite le prerequis edge-to-edge pose par MainActivity/TvMainActivity
+    // (WindowCompat.setDecorFitsSystemWindows(window, false) avant setContent) : sans
+    // lui, le systeme continue de reserver la place des barres meme une fois masquees.
+    if (osdEnabled) {
+        DisposableEffect(Unit) {
+            val window = context.findActivity()?.window
+            val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
+            insetsController?.let {
+                it.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                it.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            }
+            onDispose {
+                // Sortie du plein ecran (retour arriere ou navigation ailleurs) : les
+                // barres systeme redeviennent visibles, comme avant l'entree en immersion.
+                insetsController?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            }
+        }
+    }
+
     DisposableEffect(channel.id) {
         onDispose {
             controller?.release()
@@ -520,6 +564,16 @@ fun PlayerScreen(
                         // geste Compose pose sur le Box englobant ne recevrait rien).
                         val swipeMinDistancePx = SWIPE_MIN_DISTANCE_DP * resources.displayMetrics.density
                         val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+                            override fun onDown(e: MotionEvent): Boolean {
+                                // Sans ceci, onDown() renvoie false par defaut et Android
+                                // n'achemine jamais la suite du geste (ACTION_MOVE/UP) a
+                                // cette View : seul le tout premier ACTION_DOWN serait recu,
+                                // onSingleTapUp/onFling ne se declencheraient plus jamais -
+                                // c'est ce qui empechait un tap de refaire apparaitre l'OSD
+                                // (boutons reglages, etc.) une fois sorti du plein ecran.
+                                return true
+                            }
+
                             override fun onSingleTapUp(e: MotionEvent): Boolean {
                                 toggleOsd()
                                 return true
@@ -643,6 +697,20 @@ fun PlayerScreen(
             )
         }
     }
+}
+
+/**
+ * Remonte du [Context] Compose (potentiellement un ContextWrapper - theme, langue...)
+ * jusqu'a l'[Activity] qui porte reellement la fenetre (mode immersif ci-dessus) -
+ * LocalContext.current n'est pas toujours directement une Activity. Retourne null si
+ * aucune Activity n'est trouvee (cas theorique ici, PlayerScreen n'etant instancie que
+ * depuis MainActivity/TvMainActivity ou leurs mini-lecteurs, mais le mode immersif est
+ * de toute facon inactif pour ces derniers - voir osdEnabled).
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /**

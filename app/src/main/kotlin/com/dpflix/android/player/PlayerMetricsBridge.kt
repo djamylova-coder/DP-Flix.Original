@@ -111,6 +111,14 @@ object PlayerMetricsBridge {
         _streamBitrateKbps.value = null
         _segmentsSucceeded.value = null
         _segmentsFailed.value = null
-        _recentErrors.value = null
+        // Fix (2026-07-24, cinquième passage) : `recentErrors` ne se réinitialise PLUS
+        // ici. C'est justement ce journal que l'utilisateur va consulter dans Réglages →
+        // Diagnostic juste après avoir fermé un écran d'erreur (le X du lecteur) — le
+        // vider au dispose du lecteur le rendait systématiquement vide au moment précis
+        // où il sert le plus (bug identifié le 24 juillet 2026 sur le fil Rakuten/LCI :
+        // le nouvel enrichissement réseau de NetworkDiagnostics n'apparaissait donc
+        // jamais, quelle que soit la qualité de sa capture). Il sera naturellement
+        // écrasé au prochain `playChannel` réel (nouvelle collecte de `recentErrors`
+        // dans PlayerScreen), jamais par une simple sortie d'écran.
     }
 }

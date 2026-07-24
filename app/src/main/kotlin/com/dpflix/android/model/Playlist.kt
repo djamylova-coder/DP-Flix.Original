@@ -79,7 +79,21 @@ data class Playlist(
     val resumeLastChannelOnStart: Boolean = true,
 
     // --- Numérotation des chaînes personnalisée (§5.3), par playlist ---
-    val useCustomChannelNumbering: Boolean = false
+    val useCustomChannelNumbering: Boolean = false,
+
+    // --- Réseau avancé (2026-07-24, réponse à la demande "tout type de flux") ---
+    // Distinct de la cascade automatique de IptvHttpDataSourceFactory : ces champs
+    // permettent à l'utilisateur de FORCER une valeur pour CETTE playlist quand la
+    // cascade automatique ne suffit pas (panel exigeant un Referer/User-Agent précis
+    // que rien ne permet de deviner). `null`/vide = comportement automatique inchangé.
+    /** Referer forcé pour toutes les requêtes (manifeste+segments) de cette playlist. */
+    val customReferer: String? = null,
+    /** User-Agent forcé, avant la cascade automatique, pour cette playlist. */
+    val customUserAgent: String? = null,
+    /** Hôte du proxy HTTP à utiliser pour cette playlist (ex. "10.0.0.5"), `null` = pas de proxy dédié. */
+    val proxyHost: String? = null,
+    /** Port du proxy HTTP ; ignoré si [proxyHost] est `null`. */
+    val proxyPort: Int? = null
 ) {
     init {
         require(name.isNotBlank()) { "Le nom de la playlist ne peut pas être vide" }

@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
@@ -168,7 +170,7 @@ fun SettingsScreenTv(
                         onRequestAdd = viewModel::requestAddPlaylist,
                         onDismissAdd = viewModel::dismissAddPlaylist,
                         onActivate = viewModel::activatePlaylist,
-                        onRename = viewModel::renamePlaylist,
+                        onSaveEdits = viewModel::updatePlaylistEdits,
                         onRequestDelete = viewModel::requestDeletePlaylist,
                         onCancelDelete = viewModel::cancelDeletePlaylist,
                         onConfirmDelete = viewModel::confirmDeletePlaylist
@@ -553,7 +555,7 @@ private fun PlaylistsSectionBodyTv(
     onRequestAdd: () -> Unit,
     onDismissAdd: () -> Unit,
     onActivate: (String) -> Unit,
-    onRename: (String, String) -> Unit,
+    onSaveEdits: (String, String, String?, String?, String?, String?) -> Unit,
     onRequestDelete: (String) -> Unit,
     onCancelDelete: () -> Unit,
     onConfirmDelete: () -> Unit
@@ -571,7 +573,7 @@ private fun PlaylistsSectionBodyTv(
         if (!uiState.showAddPlaylist) firstItemFocusRequester.requestFocus()
     }
 
-    var renameTarget by remember { mutableStateOf<Playlist?>(null) }
+    var editTarget by remember { mutableStateOf<Playlist?>(null) }
     val atLimit = uiState.playlists.size >= PlaylistRepository.MAX_PLAYLISTS
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -599,7 +601,7 @@ private fun PlaylistsSectionBodyTv(
                         playlist = playlist,
                         channelCount = uiState.channelCounts[playlist.id] ?: 0,
                         onActivate = { onActivate(playlist.id) },
-                        onRename = { renameTarget = playlist },
+                        onRename = { editTarget = playlist },
                         onDelete = { onRequestDelete(playlist.id) }
                     )
                 }
@@ -607,14 +609,14 @@ private fun PlaylistsSectionBodyTv(
         }
     }
 
-    renameTarget?.let { target ->
-        RenamePlaylistDialogTv(
+    editTarget?.let { target ->
+        EditPlaylistDialogTv(
             playlist = target,
-            onConfirm = { newName ->
-                onRename(target.id, newName)
-                renameTarget = null
+            onConfirm = { newName, customReferer, customUserAgent, proxyHost, proxyPort ->
+                onSaveEdits(target.id, newName, customReferer, customUserAgent, proxyHost, proxyPort)
+                editTarget = null
             },
-            onDismiss = { renameTarget = null }
+            onDismiss = { editTarget = null }
         )
     }
 
@@ -680,22 +682,96 @@ private fun PlaylistRowTv(
     }
 }
 
+/** Équivalent TV de [EditPlaylistDialog] (mobile, `SettingsScreen.kt`) — voir sa doc. */
 @Composable
-private fun RenamePlaylistDialogTv(playlist: Playlist, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+private fun EditPlaylistDialogTv(
+    playlist: Playlist,
+    onConfirm: (name: String, customReferer: String?, customUserAgent: String?, proxyHost: String?, proxyPort: String?) -> Unit,
+    onDismiss: () -> Unit
+) {
     var name by remember(playlist.id) { mutableStateOf(playlist.name) }
+    var customReferer by remember(playlist.id) { mutableStateOf(playlist.customReferer.orEmpty()) }
+    var customUserAgent by remember(playlist.id) { mutableStateOf(playlist.customUserAgent.orEmpty()) }
+    var proxyHost by remember(playlist.id) { mutableStateOf(playlist.proxyHost.orEmpty()) }
+    var proxyPort by remember(playlist.id) { mutableStateOf(playlist.proxyPort?.toString().orEmpty()) }
+    var showAdvanced by remember(playlist.id) { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { M3Text("Renommer la playlist") },
+        title = { M3Text("Modifier la playlist") },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { M3Text("Nom") }
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { M3Text("Nom") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                    M3Text(
+                        text = if (showAdvanced) "Masquer le réseau avancé" else "Réseau avancé (optionnel)",
+                        color = DpFlixColors.OnBackgroundMuted
+                    )
+                }
+
+                if (showAdvanced) {
+                    M3Text(
+                        text = "À renseigner seulement si les chaînes de cette playlist refusent de charger sans un Referer, un User-Agent ou un proxy précis. Laisser vide sinon.",
+                        color = DpFlixColors.OnBackgroundMuted,
+                        fontSize = 14.sp
+                    )
+                    OutlinedTextField(
+                        value = customReferer,
+                        onValueChange = { customReferer = it },
+                        singleLine = true,
+                        label = { M3Text("Referer forcé") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = customUserAgent,
+                        onValueChange = { customUserAgent = it },
+                        singleLine = true,
+                        label = { M3Text("User-Agent forcé") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = proxyHost,
+                        onValueChange = { proxyHost = it },
+                        singleLine = true,
+                        label = { M3Text("Hôte du proxy") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = proxyPort,
+                        onValueChange = { input -> if (input.all { it.isDigit() }) proxyPort = input },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        label = { M3Text("Port du proxy") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        name,
+                        customReferer.takeIf { it.isNotBlank() },
+                        customUserAgent.takeIf { it.isNotBlank() },
+                        proxyHost.takeIf { it.isNotBlank() },
+                        proxyPort.takeIf { it.isNotBlank() }
+                    )
+                },
+                enabled = name.isNotBlank()
+            ) {
                 M3Text("Enregistrer", color = DpFlixColors.Red)
             }
         },

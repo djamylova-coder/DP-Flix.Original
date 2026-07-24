@@ -30,7 +30,11 @@ fun PlaylistEntity.toDomain(): Playlist = Playlist(
     defaultVideoQuality = defaultVideoQuality,
     resumeLastChannelOnStart = resumeLastChannelOnStart,
     useCustomChannelNumbering = useCustomChannelNumbering,
-    lastEpgUpdateMillis = lastEpgUpdateMillis
+    lastEpgUpdateMillis = lastEpgUpdateMillis,
+    customReferer = customReferer,
+    customUserAgent = customUserAgent,
+    proxyHost = proxyHost,
+    proxyPort = proxyPort
 )
 
 /** Conversion modèle métier → entité Room. Fonction pure, aucune IO. */
@@ -53,5 +57,9 @@ fun Playlist.toEntity(): PlaylistEntity = PlaylistEntity(
     defaultVideoQuality = defaultVideoQuality,
     resumeLastChannelOnStart = resumeLastChannelOnStart,
     useCustomChannelNumbering = useCustomChannelNumbering,
-    lastEpgUpdateMillis = lastEpgUpdateMillis
+    lastEpgUpdateMillis = lastEpgUpdateMillis,
+    customReferer = customReferer,
+    customUserAgent = customUserAgent,
+    proxyHost = proxyHost,
+    proxyPort = proxyPort
 )

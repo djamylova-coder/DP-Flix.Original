@@ -7,7 +7,11 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -50,6 +54,42 @@ object IptvHttpDataSourceFactory {
      * (2xx). S'arrête au premier succès ; retourne la dernière réponse obtenue si
      * aucune tentative n'aboutit (pour que l'erreur remontée reste informative).
      */
+    // Durcissement générique (2026-07-24, cinquième passage) : certains CDN (observé sur
+    // un flux TF1/LCI) ne filtrent ni le User-Agent ni ne renvoient d'erreur HTTP nette
+    // en son absence — ils exigent en réalité un `Referer`/`Origin` cohérent avec une
+    // navigation normale, et à défaut laissent parfois la connexion s'installer sans
+    // jamais livrer de données exploitables (vu côté app comme un blocage silencieux,
+    // pas une erreur). Un navigateur envoie ces en-têtes automatiquement ; ce client
+    // OkHttp ne le faisait pas du tout jusqu'ici. Auto-référencé sur l'hôte de la
+    // requête elle-même (schéma+hôte) plutôt que sur un domaine "officiel" deviné :
+    // même heuristique que la cascade de User-Agent (imiter une navigation plausible),
+    // sans base de correspondances hôte -> site officiel à maintenir. N'écrase jamais
+    // un en-tête déjà fixé par l'appelant.
+    private val refererOriginInterceptor = Interceptor { chain ->
+        val original = chain.request()
+        val selfOrigin = "${original.url.scheme}://${original.url.host}"
+        val builder = original.newBuilder()
+        if (original.header("Referer") == null) builder.header("Referer", "$selfOrigin/")
+        if (original.header("Origin") == null) builder.header("Origin", selfOrigin)
+        chain.proceed(builder.build())
+    }
+
+    // Durcissement générique (2026-07-24) : certains panels/CDN posent un cookie de
+    // session à la première requête (auth, sélection de datacenter/CDN edge...) et
+    // s'attendent à le revoir sur les requêtes suivantes (manifeste puis segments) —
+    // un `OkHttpClient` sans `CookieJar` explicite ignore silencieusement tout
+    // `Set-Cookie` reçu, ce qui peut faire échouer ou stagner les requêtes suivantes
+    // exactement comme un blocage réseau ordinaire, sans qu'aucun code HTTP ne le
+    // trahisse. `ConcurrentHashMap` : les requêtes HLS (manifeste + segments en
+    // parallèle) tournent sur plusieurs threads du pool OkHttp.
+    private val inMemoryCookieJar = object : CookieJar {
+        private val store = ConcurrentHashMap<String, List<Cookie>>()
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            if (cookies.isNotEmpty()) store[url.host] = cookies
+        }
+        override fun loadForRequest(url: HttpUrl): List<Cookie> = store[url.host] ?: emptyList()
+    }
+
     private val userAgentFallbackInterceptor = Interceptor { chain ->
         var lastResponse: Response? = null
         var response: Response? = null
@@ -72,9 +112,16 @@ object IptvHttpDataSourceFactory {
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .followSslRedirects(true)
+            .cookieJar(inMemoryCookieJar)
             .sslSocketFactory(PermissiveTls.sslSocketFactory, PermissiveTls.trustManager)
             .hostnameVerifier(PermissiveTls.hostnameVerifier)
+            .addInterceptor(refererOriginInterceptor)
             .addInterceptor(userAgentFallbackInterceptor)
+            // Diagnostic ciblé (2026-07-24) : ajouté APRÈS la cascade de User-Agent pour
+            // capturer chaque tentative réellement envoyée au serveur (pas seulement la
+            // première) — voir NetworkDiagnostics pour le détail et son usage dans
+            // PlayerController.onPlayerError.
+            .addInterceptor(NetworkDiagnostics.interceptor)
             .build()
     }
 
@@ -87,6 +134,48 @@ object IptvHttpDataSourceFactory {
      * du lecteur vidéo.
      */
     fun httpClient(): OkHttpClient = okHttpClient
+
+    /**
+     * Variante par playlist (2026-07-24, réponse à la demande "tout type de requête") :
+     * quand [playlist] force un `customReferer`/`customUserAgent`/`proxyHost`, dérive
+     * [okHttpClient] via `newBuilder()` plutôt que de construire un nouveau client de
+     * zéro — conserve le pool de connexions, le TLS permissif et la cascade existante,
+     * n'ajoute que ce qui doit VRAIMENT être forcé. `newBuilder().addInterceptor(...)`
+     * ajoute en fin de liste : ces en-têtes forcés s'appliquent donc APRÈS
+     * [refererOriginInterceptor]/[userAgentFallbackInterceptor] et les remplacent, sans
+     * quoi un forçage utilisateur explicite pourrait être silencieusement écrasé par la
+     * cascade automatique. `null`/tous champs vides -> [okHttpClient] tel quel, aucun
+     * client supplémentaire créé (cas normal, très large majorité des playlists).
+     */
+    fun httpClient(playlist: com.dpflix.android.model.Playlist?): OkHttpClient {
+        if (playlist == null) return okHttpClient
+        val hasOverride = !playlist.customReferer.isNullOrBlank() ||
+            !playlist.customUserAgent.isNullOrBlank() ||
+            (!playlist.proxyHost.isNullOrBlank() && playlist.proxyPort != null)
+        if (!hasOverride) return okHttpClient
+
+        val builder = okHttpClient.newBuilder()
+
+        if (!playlist.proxyHost.isNullOrBlank() && playlist.proxyPort != null) {
+            builder.proxy(
+                java.net.Proxy(
+                    java.net.Proxy.Type.HTTP,
+                    java.net.InetSocketAddress(playlist.proxyHost, playlist.proxyPort)
+                )
+            )
+        }
+
+        if (!playlist.customReferer.isNullOrBlank() || !playlist.customUserAgent.isNullOrBlank()) {
+            builder.addInterceptor { chain ->
+                val forced = chain.request().newBuilder()
+                playlist.customReferer?.takeIf { it.isNotBlank() }?.let { forced.header("Referer", it) }
+                playlist.customUserAgent?.takeIf { it.isNotBlank() }?.let { forced.header("User-Agent", it) }
+                chain.proceed(forced.build())
+            }
+        }
+
+        return builder.build()
+    }
 
     /** DataSource.Factory à passer à HlsMediaSource.Factory (ou tout MediaSource.Factory Media3).
      *  Context requis par DefaultDataSource.Factory (type non-nullable côté Media3) pour la

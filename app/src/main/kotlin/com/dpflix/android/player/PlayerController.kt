@@ -102,7 +102,7 @@ data class QualityOption(val height: Int) {
  * Instancié et détenu par l'écran qui l'utilise (voir [PlayerScreen]) ; `release()` DOIT
  * être appelé quand cet écran disparaît, sous peine de fuite du décodeur vidéo.
  */
-class PlayerController(context: Context, private val settings: PlayerSettings) {
+class PlayerController(context: Context, private val settings: PlayerSettings, playlist: com.dpflix.android.model.Playlist? = null) {
 
     private val _uiState = MutableStateFlow<PlayerUiState>(PlayerUiState.Idle)
     val uiState: StateFlow<PlayerUiState> = _uiState
@@ -170,8 +170,11 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     // TLS, qui faisait de PlayerController le vrai point de blocage des flux rejetés
     // (voir com.dpflix.android.network.IptvHttpDataSourceFactory pour le détail de la
     // cascade de User-Agent et du TLS permissif appliqués ici).
+    // Fix (2026-07-24) : httpClient(playlist) plutôt que httpClient() — dérive le client
+    // partagé si CETTE playlist force un Referer/User-Agent/proxy (voir sa doc), sinon
+    // retourne le client partagé tel quel (cas normal, aucun coût supplémentaire).
     private val httpDataSourceFactory = OkHttpDataSource.Factory(
-        com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient()
+        com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient(playlist)
     )
 
     /**
@@ -188,25 +191,65 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     /** Dernière chaîne demandée via [playChannel], nécessaire au rechargement complet du watchdog. */
     private var currentChannel: Channel? = null
 
-    // Fix (2026-07-22, second passage) : plusieurs panels Xtream annoncent un
-    // container_extension (m3u8 ou ts) qui ne correspond pas a ce qu'ils servent
-    // reellement sur cette URL. DefaultMediaSourceFactory route le MediaSource a
-    // construire (HLS vs progressif/TS) sur la seule extension de l'URI : si le contenu
-    // reel ne correspond pas a ce que l'extension promettait, aucun extracteur ne sait
-    // le lire -> PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED.
-    private var containerFallbackAttempted = false
+    // Fix (2026-07-22, second passage ; generalise 2026-07-23, quatrieme passage) :
+    // plusieurs panels annoncent un container_extension (m3u8 ou ts) qui ne correspond
+    // pas a ce qu'ils servent reellement sur cette URL, et d'autres (playlists M3U
+    // generiques hors Xtream) ne donnent aucune extension exploitable du tout.
+    // DefaultMediaSourceFactory route le MediaSource a construire (HLS, DASH, TS/
+    // progressif...) sur l'extension de l'URI ou le mimeType explicite fourni ; si aucun
+    // des deux ne correspond a ce que le serveur sert reellement, aucun extracteur ne
+    // sait le lire -> PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED.
+    //
+    // Plutot qu'un seul essai (l'ancien containerFallbackAttempted, un simple booleen),
+    // [containerFallbackQueue] retient une file ordonnee de tentatives a essayer une par
+    // une a chaque nouvelle erreur du meme type, jusqu'a epuisement - voir
+    // [buildContainerFallbackQueue]. Reconstruite (donc remise a zero) a chaque
+    // [playChannel], comme [behindLiveWindowRecoveries].
+    private data class ContainerAttempt(val uri: String, val mimeType: String?)
+
+    private val containerFallbackQueue = ArrayDeque<ContainerAttempt>()
+
+    /**
+     * Construit la file de secours pour [uri] : d'abord l'inversion d'extension
+     * classique (m3u8 <-> ts, cas Xtream connu), puis une cascade de mimeTypes forces
+     * sur l'URI d'origine - utile quand celle-ci n'a aucune extension exploitable
+     * (playlists M3U generiques) ou quand le sniffing par defaut se trompe. Ordre choisi
+     * par frequence reelle en IPTV : TS brut (tres largement majoritaire en direct), HLS
+     * et MP4 (VOD/replay), DASH et Smooth Streaming en dernier recours (rares en IPTV
+     * grand public, gardes pour la generalite - modules media3-exoplayer-dash/
+     * -smoothstreaming ajoutes au projet a cet effet).
+     * `LinkedHashSet` : ordre conserve, doublons automatiquement ecartes (ex. le
+     * mimeType deja implicite dans la tentative d'origine ne se represente pas deux
+     * fois).
+     */
+    private fun buildContainerFallbackQueue(uri: String): ArrayDeque<ContainerAttempt> {
+        val originalMimeType = mimeTypeForUri(uri)
+        val attempts = LinkedHashSet<ContainerAttempt>()
+
+        alternateContainerUri(uri)?.let { attempts += ContainerAttempt(it, mimeTypeForUri(it)) }
+
+        listOf(
+            MimeTypes.VIDEO_MP2T,
+            MimeTypes.APPLICATION_M3U8,
+            MimeTypes.VIDEO_MP4,
+            MimeTypes.APPLICATION_MPD,
+            MimeTypes.APPLICATION_SS
+        ).filter { it != originalMimeType }
+            .forEach { attempts += ContainerAttempt(uri, it) }
+
+        return ArrayDeque(attempts)
+    }
 
     // Fix (2026-07-23) : ERROR_CODE_BEHIND_LIVE_WINDOW survient quand la fenetre live
     // (DVR) reellement servie par le panel/l'origine est plus courte que le retard cible
     // configure (settings.liveDelaySeconds) : ExoPlayer essaie de tenir une position qui
     // vient de sortir de la fenetre disponible -> PlaybackException fatale immediate, hors
     // watchdog (ce n'est pas un blocage/stall, c'est une exception directe a la
-    // preparation). Compteur borne (pas juste un booleen comme containerFallbackAttempted)
-    // : un flux dont la fenetre est structurellement trop courte peut re-emettre cette
-    // erreur a chaque tentative si on se contente de se replacer sur le direct - au-dela de
-    // BEHIND_LIVE_WINDOW_MAX_RECOVERIES, on laisse l'erreur fatale s'afficher normalement
-    // plutot que de boucler indefiniment. Remis a zero a chaque playChannel, comme
-    // containerFallbackAttempted.
+    // preparation). Compteur borne (pas juste illimite) : un flux dont la fenetre est
+    // structurellement trop courte peut re-emettre cette erreur a chaque tentative si on
+    // se contente de se replacer sur le direct - au-dela de BEHIND_LIVE_WINDOW_MAX_RECOVERIES,
+    // on laisse l'erreur fatale s'afficher normalement plutot que de boucler
+    // indefiniment. Remis a zero a chaque playChannel, comme containerFallbackQueue.
     private var behindLiveWindowRecoveries = 0
 
     private fun alternateContainerUri(uri: String): String? = when {
@@ -218,6 +261,9 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
     private fun mimeTypeForUri(uri: String): String? = when {
         uri.endsWith(".m3u8", ignoreCase = true) -> MimeTypes.APPLICATION_M3U8
         uri.endsWith(".ts", ignoreCase = true) -> MimeTypes.VIDEO_MP2T
+        uri.endsWith(".mpd", ignoreCase = true) -> MimeTypes.APPLICATION_MPD
+        uri.endsWith(".ism", ignoreCase = true) || uri.endsWith(".isml", ignoreCase = true) ->
+            MimeTypes.APPLICATION_SS
         else -> null
     }
 
@@ -322,15 +368,13 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    // Fix (2026-07-22, second passage) : PARSING_CONTAINER_UNSUPPORTED sur
-                    // un flux Xtream signifie très probablement que l'extension utilisée
-                    // dans l'URL (.m3u8/.ts, voir XtreamClient.buildStreamUrl) ne
-                    // correspond pas à ce que le panel sert réellement à cette adresse.
-                    // Une seule bascule automatique vers l'autre extension avant
-                    // d'abandonner (voir containerFallbackAttempted) : si ça marche,
+                    // Fix (2026-07-22, second passage ; generalise 2026-07-23,
+                    // quatrieme passage) : PARSING_CONTAINER_UNSUPPORTED signifie que
+                    // l'extension/mimeType utilise pour cette URL ne correspond pas a ce
+                    // que le serveur sert reellement. Plusieurs essais en cascade avant
+                    // d'abandonner (voir containerFallbackQueue) : si l'un d'eux marche,
                     // l'utilisateur ne voit jamais l'erreur ; sinon, le flux est
                     // réellement injouable et l'erreur fatale s'affiche normalement.
-                    val channel = currentChannel
 
                     // Fix (2026-07-23) : voir behindLiveWindowRecoveries. On se replace sur
                     // le direct (seekToDefaultPosition + prepare) plutot que de remonter une
@@ -351,16 +395,23 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
                     }
 
                     if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
-                        !containerFallbackAttempted &&
-                        channel != null
+                        containerFallbackQueue.isNotEmpty()
                     ) {
-                        val altUri = alternateContainerUri(channel.streamUrl)
-                        if (altUri != null) {
-                            containerFallbackAttempted = true
-                            appendRecentError("${error.errorCodeName} - nouvelle tentative avec un autre conteneur")
-                            startPlayback(altUri)
-                            return
-                        }
+                        val next = containerFallbackQueue.removeFirst()
+                        // Diagnostic ciblé (2026-07-24) : la dernière réponse HTTP réellement
+                        // reçue (code, Content-Type, début du corps si non-binaire) — voir
+                        // com.dpflix.android.network.NetworkDiagnostics. Sans ça, ce message ne
+                        // dit jamais si le serveur a renvoyé une vraie erreur/page inattendue à
+                        // la place du flux, ou si le flux est structurellement dans un format
+                        // non reconnu malgré une réponse HTTP par ailleurs normale.
+                        val networkDetail = com.dpflix.android.network.NetworkDiagnostics.lastSummary()
+                        appendRecentError(
+                            "${error.errorCodeName} - nouvelle tentative " +
+                                "(${next.mimeType ?: "détection automatique"})" +
+                                (networkDetail?.let { " — $it" } ?: "")
+                        )
+                        startPlayback(next.uri, forcedMimeType = next.mimeType)
+                        return
                     }
                     // Media3 a déjà épuisé ses tentatives (ResilientLoadErrorHandlingPolicy)
                     // avant de remonter ici : plus rien à faire côté watchdog, la reprise
@@ -369,8 +420,14 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
                     _uiState.value = PlayerUiState.Error(error.errorCodeName)
                     // Erreur fatale : la plus grave de toutes, mérite sa place dans le
                     // journal Diagnostic (§5.5) au même titre que les échecs de segment
-                    // ci-dessous, pas seulement l'état UI Error.
-                    appendRecentError(error.errorCodeName)
+                    // ci-dessous, pas seulement l'état UI Error. Même enrichissement réseau
+                    // que ci-dessus (2026-07-24) : la dernière réponse HTTP reçue avant
+                    // l'abandon définitif est l'information la plus utile pour comprendre
+                    // pourquoi CE flux précis échoue.
+                    val networkDetail = com.dpflix.android.network.NetworkDiagnostics.lastSummary()
+                    appendRecentError(
+                        error.errorCodeName + (networkDetail?.let { " — $it" } ?: "")
+                    )
                 }
             })
             // Instrumentation Diagnostic (§5.5, étape 10) : débit réseau, résolution/
@@ -558,11 +615,13 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
         _segmentsSucceeded.value = 0
         _segmentsFailed.value = 0
         _recentErrors.value = emptyList()
-        // Fix (2026-07-22, second passage) : nouvelle chaîne = nouvel essai autorisé côté
-        // fallback de conteneur (voir containerFallbackAttempted/onPlayerError) ; sans ce
-        // reset, une chaîne qui a déjà basculé une fois resterait bloquée sans seconde
-        // chance sur un zap ultérieur vers une autre chaîne.
-        containerFallbackAttempted = false
+        // Fix (2026-07-22, second passage ; generalise 2026-07-23, quatrieme passage) :
+        // nouvelle chaîne = nouvelle file de repli conteneur reconstruite pour ce flux -
+        // voir buildContainerFallbackQueue/onPlayerError. Sans cette remise a zero, une
+        // chaîne dont la file precedente etait deja epuisee resterait bloquee sans
+        // nouvel essai sur un zap ultérieur vers une autre chaîne.
+        containerFallbackQueue.clear()
+        containerFallbackQueue.addAll(buildContainerFallbackQueue(channel.streamUrl))
         behindLiveWindowRecoveries = 0
         scheduleWatchdog()
         startPlayback(channel.streamUrl)
@@ -580,10 +639,10 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
      * renvoyé par le panel est absent ou trompeur, cause plausible du
      * PARSING_CONTAINER_UNSUPPORTED initial même sans changement d'extension.
      */
-    private fun startPlayback(uri: String) {
+    private fun startPlayback(uri: String, forcedMimeType: String? = null) {
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
-            .apply { mimeTypeForUri(uri)?.let { setMimeType(it) } }
+            .apply { (forcedMimeType ?: mimeTypeForUri(uri))?.let { setMimeType(it) } }
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
                     .setTargetOffsetMs(settings.liveDelaySeconds * 1000L)
@@ -743,14 +802,24 @@ class PlayerController(context: Context, private val settings: PlayerSettings) {
          * enregistrés (DataStore, étape 4c) plutôt que des valeurs par défaut codées en
          * dur — "branché sur PlayerSettings" (§7 étape 5b). Lit un instantané (`first()`),
          * voir la note sur `settings` ci-dessus pour la portée de ce choix.
+         *
+         * [playlist] (2026-07-24) : optionnelle — passer la [com.dpflix.android.model.Playlist]
+         * de la chaîne à lire permet au client HTTP interne d'appliquer son éventuel
+         * forçage Referer/User-Agent/proxy (voir [com.dpflix.android.network.IptvHttpDataSourceFactory.httpClient]).
+         * `null` = comportement automatique inchangé (cascade seule), c'est le cas de la
+         * quasi-totalité des appels existants avant ce paramètre.
          */
-        suspend fun create(context: Context, settingsRepository: SettingsRepository): PlayerController {
+        suspend fun create(
+            context: Context,
+            settingsRepository: SettingsRepository,
+            playlist: com.dpflix.android.model.Playlist? = null
+        ): PlayerController {
             val settings = settingsRepository.playerSettings.first()
-            return PlayerController(context, settings)
+            return PlayerController(context, settings, playlist)
         }
 
         /** Variante pratique quand on n'a pas déjà un [SettingsRepository] sous la main (bancs de test). */
-        suspend fun create(context: Context): PlayerController =
-            create(context, SettingsRepository(SettingsDataStore(context)))
+        suspend fun create(context: Context, playlist: com.dpflix.android.model.Playlist? = null): PlayerController =
+            create(context, SettingsRepository(SettingsDataStore(context)), playlist)
     }
 }

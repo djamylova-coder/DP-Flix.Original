@@ -145,7 +145,12 @@ fun DpFlixTvNavHost(
             ResolvedChannelPlayerTv(
                 appRepository = appRepository,
                 channelId = channelId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onRequestFullReset = {
+                    navController.navigate(DpFlixDestination.Onboarding.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
             )
         }
     }
@@ -160,9 +165,22 @@ private const val TV_POST_SPLASH_ROUTE = "tv_post_splash_routing"
  * Le cas spécial `channelId == "test"` (chaîne de démonstration BipBop) a disparu à
  * cette étape 7c : [HomeScreenTv] fournit désormais toujours un vrai ID de chaîne,
  * comme son équivalent mobile depuis 6c (voir la doc de [DpFlixNavHost]).
+ *
+ * Fix (diagnostic du 23 juillet) : [onRequestFullReset] n'était pas transmis à
+ * [PlayerScreen] ici (contrairement à `ResolvedChannelPlayer` côté mobile), qui
+ * retombait donc sur son lambda par défaut ne faisant rien. Conséquence concrète : une
+ * réinitialisation complète confirmée depuis l'incrustation Réglages du lecteur plein
+ * écran TV vidait bien playlists/réglages (`SettingsViewModel.confirmReset`), mais
+ * laissait l'utilisateur bloqué sur l'écran du lecteur au lieu de revenir à
+ * l'onboarding comme sur mobile.
  */
 @Composable
-private fun ResolvedChannelPlayerTv(appRepository: AppRepository, channelId: String, onBack: () -> Unit) {
+private fun ResolvedChannelPlayerTv(
+    appRepository: AppRepository,
+    channelId: String,
+    onBack: () -> Unit,
+    onRequestFullReset: () -> Unit
+) {
     var channel by remember(channelId) { mutableStateOf<Channel?>(null) }
     var notFound by remember(channelId) { mutableStateOf(false) }
 
@@ -173,7 +191,12 @@ private fun ResolvedChannelPlayerTv(appRepository: AppRepository, channelId: Str
 
     val currentChannel = channel
     when {
-        currentChannel != null -> PlayerScreen(channel = currentChannel, modifier = Modifier.fillMaxSize(), appRepository = appRepository)
+        currentChannel != null -> PlayerScreen(
+            channel = currentChannel,
+            modifier = Modifier.fillMaxSize(),
+            appRepository = appRepository,
+            onRequestFullReset = onRequestFullReset
+        )
         notFound -> TvPlaceholderScreen(title = "Chaîne introuvable", actions = listOf("Retour" to onBack))
         else -> Box(modifier = Modifier.fillMaxSize().background(Color.Black))
     }

@@ -349,7 +349,7 @@ private fun EpgProgramCell(program: EpgProgram, isNow: Boolean, onClick: () -> U
 /**
  * Détail d'un programme (§4.6 "détail de programme"), ouvert au clic sur une cellule.
  * Boîte de dialogue Material3 standard, même pattern que celles déjà utilisées dans
- * Réglages (`SettingsScreen.kt`, ex. `RenamePlaylistDialog`) : un seul bouton "Fermer",
+ * Réglages (`SettingsScreen.kt`, ex. `EditPlaylistDialog`) : un seul bouton "Fermer",
  * pas d'action à confirmer ici (écran de consultation uniquement).
  */
 @Composable

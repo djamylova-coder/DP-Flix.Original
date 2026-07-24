@@ -18,11 +18,19 @@ import com.dpflix.android.db.entity.PlaylistEntity
  *
  * Version 2 (6g-1) : ajout de `PlaylistEntity.lastEpgUpdateMillis` (§5.4). Version 3
  * (6g-2-1) : ajout de `PlaylistEntity.manualEpgLocalFileUri` (§5.4, import fichier EPG
- * local). Pas de `Migration` écrite pour ces bumps — voir
- * `AppContainer.fallbackToDestructiveMigration()` et sa doc pour la justification (app non
- * publiée, aucune donnée utilisateur à préserver).
+ * local). Version 4 (2026-07-24) : ajout de `customReferer`/`customUserAgent`/
+ * `proxyHost`/`proxyPort` (réseau avancé par playlist). Pas de `Migration` écrite pour
+ * ces bumps — voir `AppContainer.fallbackToDestructiveMigration()` et sa doc pour la
+ * justification (app non publiée, aucune donnée utilisateur à préserver).
+ *
+ * ATTENTION (version 4) : contrairement aux bumps précédents faits avant toute
+ * installation réelle, cette app a maintenant des playlists réellement configurées par
+ * l'utilisateur sur son appareil — `fallbackToDestructiveMigration()` les effacera
+ * TOUTES au premier lancement de cette version (table recréée de zéro, pas juste les
+ * nouvelles colonnes). Playlists (Xtream : serveur/identifiants ; M3U : URL) à
+ * ressaisir après mise à jour, ce n'est pas un effet de bord silencieux à négliger.
  */
-@Database(entities = [PlaylistEntity::class, ChannelEntity::class], version = 3, exportSchema = false)
+@Database(entities = [PlaylistEntity::class, ChannelEntity::class], version = 4, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 

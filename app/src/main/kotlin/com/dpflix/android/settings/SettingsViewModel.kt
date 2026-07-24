@@ -295,19 +295,44 @@ class SettingsViewModel(
     }
 
     /**
-     * "Modifier" (§4.3) : limité au renommage. Une ré-édition complète de la source (URL,
-     * identifiants Xtream, fichier M3U) rouvrirait tout le flux d'authentification/parsing
-     * de l'onboarding (§4.2) pour un cas d'usage marginal (les identifiants d'un serveur
-     * IPTV changent rarement) ; l'utilisateur dispose déjà de "supprimer" + "ajouter" pour
-     * remplacer entièrement une source. Décision assumée, comme d'autres réductions de
-     * périmètre documentées par les sous-étapes précédentes.
+     * "Modifier" (§4.3) : nom + réseau avancé (customReferer, customUserAgent, proxyHost,
+     * proxyPort, ajoutés le 2026-07-24). Toujours PAS de ré-édition de la source elle-même
+     * (URL, identifiants Xtream, fichier M3U) : rouvrir tout le flux d'authentification/
+     * parsing de l'onboarding (§4.2) resterait disproportionné pour un cas d'usage marginal
+     * (les identifiants d'un serveur IPTV changent rarement) ; l'utilisateur dispose déjà de
+     * "supprimer" + "ajouter" pour remplacer entièrement une source. Décision assumée, comme
+     * d'autres réductions de périmètre documentées par les sous-étapes précédentes — seul le
+     * réseau avancé rejoint ce formulaire, car il n'a de sens qu'une fois la playlist déjà en
+     * place (on découvre le besoin d'un Referer/proxy forcé en voyant un flux échouer).
+     *
+     * Chaque champ texte optionnel est vidé (`null`) si laissé blanc plutôt que stocké comme
+     * chaîne vide, pour que `Playlist.customReferer` etc. restent `null` = "pas de valeur
+     * forcée" côté [com.dpflix.android.network.IptvHttpDataSourceFactory] (cascade
+     * automatique inchangée). [proxyPortText] est parsé ici (vide/invalide -> `null`, donc
+     * proxy dédié désactivé) pour garder le formulaire Compose sans logique métier.
      */
-    fun renamePlaylist(id: String, newName: String) {
-        val trimmed = newName.trim()
-        if (trimmed.isBlank()) return
+    fun updatePlaylistEdits(
+        id: String,
+        newName: String,
+        customReferer: String?,
+        customUserAgent: String?,
+        proxyHost: String?,
+        proxyPortText: String?
+    ) {
+        val trimmedName = newName.trim()
+        if (trimmedName.isBlank()) return
+        val port = proxyPortText?.trim()?.takeIf { it.isNotBlank() }?.toIntOrNull()
         viewModelScope.launch {
             val current = appRepository.playlists.getById(id) ?: return@launch
-            appRepository.playlists.updatePlaylist(current.copy(name = trimmed))
+            appRepository.playlists.updatePlaylist(
+                current.copy(
+                    name = trimmedName,
+                    customReferer = customReferer?.trim()?.takeIf { it.isNotBlank() },
+                    customUserAgent = customUserAgent?.trim()?.takeIf { it.isNotBlank() },
+                    proxyHost = proxyHost?.trim()?.takeIf { it.isNotBlank() },
+                    proxyPort = port
+                )
+            )
         }
     }
 

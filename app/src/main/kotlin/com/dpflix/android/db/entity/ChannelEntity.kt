@@ -17,9 +17,13 @@ import androidx.room.PrimaryKey
  * l'ancienne, l'ancienne ne serait jamais mise à jour.
  *
  * Cette entité utilise donc comme clé primaire une **clé stable calculée**
- * (`ChannelMapper.stableId()` : `"$playlistId:${tvgId ?: streamUrl}"`), la même pour une
- * chaîne donnée d'un parsing à l'autre, que la source soit M3U ou Xtream. Le champ `id` du
- * modèle métier issu du parseur n'est donc jamais persisté tel quel ; voir `ChannelMapper`.
+ * (`ChannelMapper.stableId()`, en résumé `"$playlistId:${tvgId?.let { "$it::nom" } ?: streamUrl}"`),
+ * la même pour une chaîne donnée d'un parsing à l'autre, que la source soit M3U ou Xtream.
+ * Le nom est inclus dès qu'un `tvgId` est présent afin que deux chaînes distinctes
+ * réutilisant le même `tvg-id` (variantes SD/HD d'une même chaîne, fréquent sur les
+ * playlists IPTV gratuites) ne s'écrasent pas silencieusement l'une l'autre lors de
+ * l'upsert (voir détail et justification dans `ChannelMapper`). Le champ `id` du modèle
+ * métier issu du parseur n'est donc jamais persisté tel quel ; voir `ChannelMapper`.
  */
 @Entity(
     tableName = "channels",

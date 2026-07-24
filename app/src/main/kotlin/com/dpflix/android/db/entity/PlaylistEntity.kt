@@ -51,5 +51,14 @@ data class PlaylistEntity(
     val lastEpgUpdateMillis: Long?,
 
     // --- Numérotation des chaînes personnalisée (§5.3), par playlist ---
-    val useCustomChannelNumbering: Boolean
+    val useCustomChannelNumbering: Boolean,
+
+    /** Voir [com.dpflix.android.model.Playlist.customReferer] (§réseau avancé, 2026-07-24). */
+    val customReferer: String?,
+    /** Voir [com.dpflix.android.model.Playlist.customUserAgent]. */
+    val customUserAgent: String?,
+    /** Voir [com.dpflix.android.model.Playlist.proxyHost]. */
+    val proxyHost: String?,
+    /** Voir [com.dpflix.android.model.Playlist.proxyPort]. */
+    val proxyPort: Int?
 )
