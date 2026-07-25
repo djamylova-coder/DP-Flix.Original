@@ -37,8 +37,15 @@ class PlaylistRepository(private val playlistDao: PlaylistDao) {
         return AddPlaylistResult.Success(toInsert)
     }
 
+    /**
+     * Fix (2026-07-25) : `dao.update` (vrai `UPDATE` SQL), pas `dao.upsert` (`INSERT ...
+     * OnConflictStrategy.REPLACE`, qui fait un DELETE+INSERT et effaçait en cascade
+     * toutes les chaînes de la playlist à chaque appel — voir la doc de
+     * `PlaylistDao.update` pour le détail du bug et son impact concret observé
+     * (EPG manuel, rafraîchissement EPG, import Xtream initial, renommage...).
+     */
     suspend fun updatePlaylist(playlist: Playlist) {
-        playlistDao.upsert(playlist.toEntity())
+        playlistDao.update(playlist.toEntity())
     }
 
     /**
