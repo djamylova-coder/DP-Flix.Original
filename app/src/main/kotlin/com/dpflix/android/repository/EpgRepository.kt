@@ -6,6 +6,8 @@ import com.dpflix.android.model.Playlist
 import com.dpflix.android.parser.EpgXmlParser
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 
@@ -42,6 +44,23 @@ import okhttp3.Request
  * Un échec de [refresh] écrase aussi un précédent succès en cache : le cahier des charges
  * ne précise rien sur ce cas, mais un guide dont on vient de découvrir qu'il est
  * périmé/injoignable ne devrait pas continuer à laisser croire à un contenu à jour.
+ *
+ * ## Fix (25 juillet 2026, suite) : chargements concurrents sérialisés par playlist
+ * Deux appelants indépendants consomment [getOrLoad] sans se coordonner : le mini-lecteur
+ * de l'accueil (`HomeViewModel.loadPreviewProgramTitle`, à l'ouverture d'un aperçu) et
+ * l'OSD du lecteur plein écran (`PlayerScreen`, à l'entrée en plein écran). Avant ce
+ * correctif, `getOrLoad` ne consultait le cache qu'AVANT de lancer [load] — sans rien
+ * empêcher un second appel, arrivé pendant que le premier tournait encore, de constater le
+ * même cache vide et de lancer sa propre exécution de [load] en parallèle. Sur un Xtream
+ * 11 000+ chaînes, dont un seul chargement suffit déjà à approcher la limite mémoire (voir
+ * le fix du 25/07 ci-dessus, fenêtre de rétention), deux téléchargements+parsings
+ * concurrents du même guide XMLTV en doublaient le pic — recréant exactement le crash que
+ * ce premier fix visait à éliminer, désormais déclenché en pratique par l'enchaînement tap
+ * sur une chaîne à l'accueil (ouvre l'aperçu, lance un chargement) puis tap pour agrandir
+ * (avant la fin du premier chargement, en relance un second). [loadMutexes] donne un
+ * [Mutex] par playlist : un second appelant sur la même playlist attend simplement la fin
+ * du premier au lieu de le dupliquer, et récupère le résultat fraîchement mis en cache
+ * (voir le nouveau contrôle du cache dans [getOrLoad], après acquisition du verrou).
  */
 class EpgRepository(context: Context) {
 
@@ -55,6 +74,15 @@ class EpgRepository(context: Context) {
     /** Un seul résultat en cache par playlist — pas d'accès concurrent complexe attendu
      *  (mono-utilisateur, mono-appareil), une `Map` mutable simple suffit. */
     private val cache = mutableMapOf<String, EpgLoadResult>()
+
+    /** Un [Mutex] par playlist pour sérialiser les chargements concurrents — voir la doc
+     *  de classe ("chargements concurrents sérialisés par playlist"). Créé à la demande
+     *  (`getOrPut`) plutôt que par playlist connue à l'avance : cette classe n'a aucune
+     *  visibilité sur la liste des playlists existantes (ce n'est pas son rôle). */
+    private val loadMutexes = mutableMapOf<String, Mutex>()
+
+    private fun mutexFor(playlistId: String): Mutex =
+        loadMutexes.getOrPut(playlistId) { Mutex() }
 
     /**
      * Fix (2026-07-25, crash au passage en plein écran sur un Xtream 11 000+ chaînes) :
@@ -90,25 +118,45 @@ class EpgRepository(context: Context) {
 
     /** [cached] s'il existe déjà, sinon [refresh] — le point d'entrée normal pour un
      *  simple affichage (grille EPG à venir en 9b+, OSD "programme en cours" depuis 8b) :
-     *  ne force jamais un rechargement réseau juste pour regarder l'écran. */
-    suspend fun getOrLoad(playlist: Playlist): EpgLoadResult =
-        cache[playlist.id] ?: refresh(playlist)
+     *  ne force jamais un rechargement réseau juste pour regarder l'écran.
+     *
+     *  Vérifie le cache une seconde fois APRÈS avoir acquis [mutexFor] (pas seulement
+     *  avant, voir la doc de classe) : si un autre appelant a fini de charger cette
+     *  playlist pendant qu'on attendait le verrou, on récupère directement son résultat
+     *  au lieu de lancer un chargement redondant. */
+    suspend fun getOrLoad(playlist: Playlist): EpgLoadResult {
+        cache[playlist.id]?.let { return it }
+        return mutexFor(playlist.id).withLock {
+            cache[playlist.id]?.let { return@withLock it }
+            val result = load(playlist)
+            cache[playlist.id] = result
+            result
+        }
+    }
 
     /**
      * Recharge la source EPG effective de [playlist] (téléchargement URL ou lecture
      * fichier local, priorité manuel > auto-détecté, §4.6) et met à jour le cache avec
      * le résultat — succès ou échec, voir la doc de la classe.
+     *
+     * Passe aussi par [mutexFor] : un rechargement explicite (bouton "Rafraîchir l'EPG")
+     * attend la fin d'un [getOrLoad] déjà en cours sur la même playlist plutôt que de
+     * lancer un second chargement concurrent, puis force malgré tout un [load] à son tour
+     * (contrairement à [getOrLoad], pas de second contrôle du cache ici — "rafraîchir"
+     * doit toujours relire la source, même si le résultat en cache vient d'être renouvelé
+     * par l'appel qu'on attendait).
      */
-    suspend fun refresh(playlist: Playlist): EpgLoadResult {
+    suspend fun refresh(playlist: Playlist): EpgLoadResult = mutexFor(playlist.id).withLock {
         val result = load(playlist)
         cache[playlist.id] = result
-        return result
+        result
     }
 
     /** Vide le cache d'une playlist précise (ex. sa source EPG manuelle vient de changer,
      *  l'ancien contenu en cache n'a plus rien à voir). Sans effet si rien n'est en cache. */
     fun invalidate(playlistId: String) {
         cache.remove(playlistId)
+        loadMutexes.remove(playlistId)
     }
 
     /** Vide tout le cache (toutes playlists confondues). À appeler par
@@ -119,6 +167,7 @@ class EpgRepository(context: Context) {
      *  repartir sur un cache propre). */
     fun clearAll() {
         cache.clear()
+        loadMutexes.clear()
     }
 
     private suspend fun load(playlist: Playlist): EpgLoadResult = try {
