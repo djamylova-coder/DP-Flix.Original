@@ -1,12 +1,9 @@
 package com.dpflix.android.network
 
-import java.net.InetAddress
-import java.net.Socket
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.X509TrustManager
 
@@ -28,13 +25,6 @@ import javax.net.ssl.X509TrustManager
  * de serveur). Acceptable ici pour un usage personnel où les identifiants Xtream
  * transitent déjà dans l'URL plutôt que dans un header d'auth séparé, et où
  * l'alternative concrète est simplement "le flux ne se lit pas du tout".
- *
- * Fix (2026-07-25) : au-delà de la confiance du certificat, [sslSocketFactory] force
- * désormais sur chaque socket TOUS les protocoles TLS supportés par la plateforme
- * (jusqu'à TLSv1/TLSv1.1 inclus) et toutes les suites de chiffrement disponibles,
- * plutôt que le sous-ensemble "moderne" activé par défaut. Un panel tournant sur une
- * vieille pile OpenSSL/PHP qui ne parle que TLSv1.1, par exemple, échouait sinon la
- * négociation TLS avant même d'atteindre le TrustManager permissif ci-dessus.
  */
 object PermissiveTls {
 
@@ -47,56 +37,11 @@ object PermissiveTls {
     /** Accepte tout nom d'hôte, y compris quand le certificat ne correspond pas au domaine appelé. */
     val hostnameVerifier = HostnameVerifier { _, _ -> true }
 
-    private val baseSslSocketFactory: SSLSocketFactory by lazy {
+    val sslSocketFactory: SSLSocketFactory by lazy {
         SSLContext.getInstance("TLS").apply {
             init(null, arrayOf(trustAllManager), SecureRandom())
         }.socketFactory
     }
 
-    val sslSocketFactory: SSLSocketFactory by lazy {
-        AllProtocolsSslSocketFactory(baseSslSocketFactory)
-    }
-
     val trustManager: X509TrustManager get() = trustAllManager
-
-    /**
-     * Délègue toute la création de sockets à [delegate], mais active systématiquement
-     * l'ensemble des protocoles et suites de chiffrement *supportés* par la plateforme
-     * (pas seulement ceux activés par défaut) sur chaque [SSLSocket] produit — voir la
-     * doc de classe ci-dessus.
-     */
-    private class AllProtocolsSslSocketFactory(
-        private val delegate: SSLSocketFactory
-    ) : SSLSocketFactory() {
-
-        private fun widenProtocols(socket: Socket): Socket {
-            if (socket is SSLSocket) {
-                socket.supportedProtocols?.let { socket.enabledProtocols = it }
-                socket.supportedCipherSuites?.let { socket.enabledCipherSuites = it }
-            }
-            return socket
-        }
-
-        override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites
-        override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites
-
-        override fun createSocket(s: Socket?, host: String?, port: Int, autoClose: Boolean): Socket =
-            widenProtocols(delegate.createSocket(s, host, port, autoClose))
-
-        override fun createSocket(host: String?, port: Int): Socket =
-            widenProtocols(delegate.createSocket(host, port))
-
-        override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket =
-            widenProtocols(delegate.createSocket(host, port, localHost, localPort))
-
-        override fun createSocket(host: InetAddress?, port: Int): Socket =
-            widenProtocols(delegate.createSocket(host, port))
-
-        override fun createSocket(
-            address: InetAddress?,
-            port: Int,
-            localAddress: InetAddress?,
-            localPort: Int
-        ): Socket = widenProtocols(delegate.createSocket(address, port, localAddress, localPort))
-    }
 }

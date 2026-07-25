@@ -40,10 +40,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.dpflix.android.model.Channel
-import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.theme.DpFlixColors
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -425,7 +426,41 @@ private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
     }
 }
 
-// [Fix logos accueil] `ChannelLogo` déplacé vers com.dpflix.android.ui.ChannelLogo.kt
-// pour être partagé avec HomeScreen/HomeScreenTv (jusqu'ici seul l'OSD l'affichait —
-// voir la doc dans ce nouveau fichier pour le contexte complet). Import ajouté
-// ci-dessus ; comportement inchangé pour l'OSD.
+/**
+ * `logoUrl` (M3U `tvg-logo` / Xtream `stream_icon`, étapes 3b-3c) était collecté et
+ * persisté depuis le tout début du projet mais n'était encore rendu nulle part (l'accueil,
+ * étape 6c/7c, n'affiche que le nom/numéro des chaînes) : premier vrai rendu d'image du
+ * projet, d'où l'ajout de Coil (voir `libs.versions.toml`) à cette sous-étape plutôt qu'à
+ * l'accueil en son temps — l'OSD en avait un besoin plus direct ("logo de la chaîne",
+ * explicitement demandé au §8a), l'accueil reste hors périmètre ici (voir README).
+ *
+ * Repli sur l'initiale du nom de la chaîne si `logoUrl` est absent — pas de tentative de
+ * détecter un échec de chargement réseau (Coil affiche alors simplement un cadre vide),
+ * cohérent avec le reste du projet qui ne traite pas les logos comme une donnée critique.
+ */
+@Composable
+private fun ChannelLogo(channel: Channel) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(DpFlixColors.Surface),
+        contentAlignment = Alignment.Center
+    ) {
+        val logoUrl = channel.logoUrl
+        if (logoUrl != null) {
+            AsyncImage(
+                model = logoUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            Text(
+                text = channel.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                color = DpFlixColors.OnBackground,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}

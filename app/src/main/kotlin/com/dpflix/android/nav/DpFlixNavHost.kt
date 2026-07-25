@@ -1,7 +1,5 @@
 package com.dpflix.android.nav
 
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.dpflix.android.epg.EpgGuideScreen
 import com.dpflix.android.home.HomeScreen
 import com.dpflix.android.model.Channel
 import com.dpflix.android.onboarding.OnboardingScreen
@@ -67,32 +66,7 @@ fun DpFlixNavHost(
     appRepository: AppRepository,
     navController: NavHostController = rememberNavController()
 ) {
-    // Fix (25 juillet 2026) : crash net à l'entrée en plein écran depuis le mini-lecteur
-    // ("l'application s'arrête net, retour à l'accueil du téléphone, parfois notification
-    // Android d'un bug"). Cause probable : NavHost anime par défaut (fondu enchaîné,
-    // AnimatedContent) chaque changement de destination — pendant toute la durée de cette
-    // animation, l'ancienne destination (Home, avec son mini-lecteur donc SON propre
-    // ExoPlayer/décodeur matériel actif, voir PlayerScreen/PlayerController) reste
-    // composée EN MÊME TEMPS que la nouvelle (PlayerFullscreen, qui crée un SECOND
-    // ExoPlayer sur la même chaîne). Deux décodeurs vidéo matériels actifs
-    // simultanément est une situation que beaucoup de téléphones (surtout entrée/milieu
-    // de gamme, ressources MediaCodec limitées) ne supportent pas et qui peut faire
-    // planter tout le processus au lieu de lever une exception Java proprement
-    // rattrapable — cohérent avec un arrêt net sans écran d'erreur applicatif.
-    // enterTransition/exitTransition à None rendent les transitions instantanées : le
-    // mini-lecteur (et son ExoPlayer, libéré par le DisposableEffect(channel.id) de
-    // PlayerScreen) disparaît immédiatement au lieu de rester visible/actif pendant un
-    // fondu, supprimant la fenêtre de chevauchement. Contrepartie assumée : les
-    // transitions entre écrans (Accueil ↔ Réglages ↔ Lecteur plein écran) sont
-    // désormais des coupures franches plutôt que des fondus enchaînés.
-    NavHost(
-        navController = navController,
-        startDestination = DpFlixDestination.Splash.route,
-        enterTransition = { EnterTransition.None },
-        exitTransition = { ExitTransition.None },
-        popEnterTransition = { EnterTransition.None },
-        popExitTransition = { ExitTransition.None }
-    ) {
+    NavHost(navController = navController, startDestination = DpFlixDestination.Splash.route) {
 
         composable(DpFlixDestination.Splash.route) {
             SplashScreen(
@@ -145,6 +119,17 @@ fun DpFlixNavHost(
             HomeScreen(
                 appRepository = appRepository,
                 onNavigateToSettings = { navController.navigate(DpFlixDestination.Settings.route) },
+                onNavigateToEpgGuide = { navController.navigate(DpFlixDestination.EpgGuide.route) },
+                onNavigateToPlayerFullscreen = { channelId ->
+                    navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
+                }
+            )
+        }
+
+        composable(DpFlixDestination.EpgGuide.route) {
+            EpgGuideScreen(
+                appRepository = appRepository,
+                onBack = { navController.popBackStack() },
                 onNavigateToPlayerFullscreen = { channelId ->
                     navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
                 }

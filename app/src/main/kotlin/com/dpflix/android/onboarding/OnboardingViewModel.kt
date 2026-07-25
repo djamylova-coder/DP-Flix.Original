@@ -161,25 +161,6 @@ class OnboardingViewModel(
                         )
                     }
                     false
-                } else if (data.channels.isEmpty() && data.rawStreamCount == 0) {
-                    // Diagnostic temporaire (à retirer une fois la cause du "0 chaîne
-                    // silencieux" identifiée) : ce cas était auparavant traité comme un
-                    // compte réellement vide et validé sans un mot — importSucceeded=true,
-                    // onComplete() immédiat, aucune trace pour l'utilisateur. Vu qu'on a
-                    // confirmé côté serveur (fetch direct hors app) que ce panel a bien
-                    // des milliers de chaînes, ce message permet de vérifier si cette
-                    // branche précise est celle qui s'exécute réellement pour ce panel,
-                    // plutôt que de suivre une piste sans preuve.
-                    _uiState.update {
-                        it.copy(
-                            errorMessage = "Diagnostic : le serveur a répondu avec succès mais " +
-                                "0 chaîne au total (rawStreamCount=0) — avant même la lecture " +
-                                "des champs. Si tu sais que ce panel a des chaînes, garde cette " +
-                                "capture d'écran, ça confirme que le blocage est ici plutôt " +
-                                "qu'au parsing individuel des chaînes."
-                        )
-                    }
-                    false
                 } else {
                     appRepository.channels.refreshChannels(playlist.id, data.channels)
                     data.detectedEpgUrl?.let { epgUrl ->

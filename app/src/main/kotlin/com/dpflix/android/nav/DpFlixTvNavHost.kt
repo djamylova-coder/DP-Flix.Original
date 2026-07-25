@@ -1,7 +1,5 @@
 package com.dpflix.android.nav
 
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +27,7 @@ import androidx.navigation.navArgument
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.dpflix.android.epg.EpgGuideScreenTv
 import com.dpflix.android.home.HomeScreenTv
 import com.dpflix.android.model.Channel
 import com.dpflix.android.onboarding.OnboardingScreenTv
@@ -67,17 +66,7 @@ fun DpFlixTvNavHost(
     appRepository: AppRepository,
     navController: NavHostController = rememberNavController()
 ) {
-    // Fix (25 juillet 2026) — même correctif que DpFlixNavHost (mobile), voir sa doc :
-    // évite le chevauchement de deux ExoPlayer actifs (mini-lecteur + plein écran)
-    // pendant l'animation de transition par défaut.
-    NavHost(
-        navController = navController,
-        startDestination = DpFlixDestination.Splash.route,
-        enterTransition = { EnterTransition.None },
-        exitTransition = { ExitTransition.None },
-        popEnterTransition = { EnterTransition.None },
-        popExitTransition = { ExitTransition.None }
-    ) {
+    NavHost(navController = navController, startDestination = DpFlixDestination.Splash.route) {
 
         composable(DpFlixDestination.Splash.route) {
             SplashScreen(
@@ -119,6 +108,17 @@ fun DpFlixTvNavHost(
             HomeScreenTv(
                 appRepository = appRepository,
                 onNavigateToSettings = { navController.navigate(DpFlixDestination.Settings.route) },
+                onNavigateToEpgGuide = { navController.navigate(DpFlixDestination.EpgGuide.route) },
+                onNavigateToPlayerFullscreen = { channelId ->
+                    navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
+                }
+            )
+        }
+
+        composable(DpFlixDestination.EpgGuide.route) {
+            EpgGuideScreenTv(
+                appRepository = appRepository,
+                onBack = { navController.popBackStack() },
                 onNavigateToPlayerFullscreen = { channelId ->
                     navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
                 }

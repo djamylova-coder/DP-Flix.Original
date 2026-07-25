@@ -252,22 +252,6 @@ class PlayerController(context: Context, private val settings: PlayerSettings, p
     // indefiniment. Remis a zero a chaque playChannel, comme containerFallbackQueue.
     private var behindLiveWindowRecoveries = 0
 
-    // Fix (2026-07-25) : [performHardReload] rappelle [playChannel], qui reschedule
-    // systematiquement un nouveau [watchdogJob] ([scheduleWatchdog]) - sur un flux
-    // durablement injoignable (panel down, chaine morte...), la sequence
-    // soft retry -> hard reload -> playChannel -> nouveau watchdog -> ... se reproduit
-    // indefiniment sans qu'aucune PlaybackException ne soit jamais levee : le blocage
-    // reste un simple Buffering en boucle, jamais un Error final visible par
-    // l'utilisateur - la "latence infinie" identifiee au diagnostic. Compteur borne,
-    // sur le meme principe que [behindLiveWindowRecoveries] : remis a zero seulement
-    // sur une vraie reprise de lecture ([updateStateFromPlayer], quand l'etat quitte
-    // Buffering) ou sur une intervention manuelle explicite ([retry]) - pas a chaque
-    // [playChannel] (qui reste appele PAR le hard reload lui-meme - le remettre a zero
-    // ici annulerait le compteur en permanence et rendrait la borne inoperante).
-    // Au-dela de [HARD_RELOAD_MAX_ATTEMPTS], on n'appelle plus playChannel : on affiche
-    // une Error finale, comme n'importe quelle PlaybackException fatale.
-    private var hardReloadAttempts = 0
-
     private fun alternateContainerUri(uri: String): String? = when {
         uri.endsWith(".m3u8", ignoreCase = true) -> uri.dropLast(5) + ".ts"
         uri.endsWith(".ts", ignoreCase = true) -> uri.dropLast(3) + ".m3u8"
@@ -536,16 +520,6 @@ class PlayerController(context: Context, private val settings: PlayerSettings, p
         } else if (newState !is PlayerUiState.Buffering) {
             cancelWatchdog()
         }
-
-        // Fix (2026-07-25) : voir la doc de hardReloadAttempts - une vraie reprise
-        // (premiere image affichee, STATE_READY) est le seul signal fiable que le flux
-        // est redevenu joignable. Remis a zero ici et nulle part ailleurs : ni dans
-        // playChannel (rappelee PAR performHardReload, ca desamorcerait le compteur a
-        // chaque tentative), ni dans scheduleWatchdog (demarre AVANT de savoir si cette
-        // tentative va reussir).
-        if (newState is PlayerUiState.Ready) {
-            hardReloadAttempts = 0
-        }
     }
 
     /**
@@ -729,18 +703,8 @@ class PlayerController(context: Context, private val settings: PlayerSettings, p
      * rechargement automatique du watchdog ([performHardReload]), qui appelle le même
      * `playChannel` mais sans intervention de l'utilisateur, avant qu'une erreur fatale
      * ne soit atteinte.
-     *
-     * Fix (2026-07-25) : remet explicitement [hardReloadAttempts] à zéro avant de
-     * rappeler `playChannel` — à la différence d'un hard reload automatique (qui laisse
-     * volontairement le compteur intact puisque c'est justement le rebouclage qu'il faut
-     * borner, voir la doc de [hardReloadAttempts]), une action manuelle de l'utilisateur
-     * est un signal explicite qu'il souhaite retenter : elle doit donc redonner au
-     * watchdog automatique un budget complet de tentatives, plutôt que de repartir avec
-     * un compteur déjà épuisé qui referait basculer sur [PlayerUiState.Error] dès le
-     * premier blocage suivant sans même laisser les paliers du watchdog jouer leur rôle.
      */
     fun retry(channel: Channel) {
-        hardReloadAttempts = 0
         playChannel(channel)
     }
 
@@ -804,26 +768,9 @@ class PlayerController(context: Context, private val settings: PlayerSettings, p
      * revenant au retard cible"). Aucun changement d'état UI additionnel : `playChannel`
      * repasse déjà par [PlayerUiState.Buffering], identique à un blocage ordinaire — pas
      * de "redémarrage brutal visible" au sens du cahier des charges.
-     *
-     * Fix (2026-07-25) : borné par [hardReloadAttempts]/[HARD_RELOAD_MAX_ATTEMPTS] — voir
-     * la doc de [hardReloadAttempts]. Sans cette borne, un flux durablement injoignable
-     * répète indéfiniment `playChannel` -> nouveau watchdog -> nouveau blocage -> nouveau
-     * `playChannel`... sans jamais lever de `PlaybackException`, donc sans jamais afficher
-     * d'[PlayerUiState.Error] : le joueur reste bloqué sur `Buffering` indéfiniment (la
-     * "latence infinie" identifiée au diagnostic). Au-delà de la borne, on affiche une
-     * erreur finale au lieu de retenter — cohérent avec le traitement des autres échecs
-     * définitifs (ex. [BEHIND_LIVE_WINDOW_MAX_RECOVERIES] juste au-dessus).
      */
     private fun performHardReload() {
         val channel = currentChannel ?: return
-        hardReloadAttempts += 1
-        if (hardReloadAttempts > HARD_RELOAD_MAX_ATTEMPTS) {
-            cancelWatchdog()
-            _uiState.value = PlayerUiState.Error(
-                "Flux injoignable après plusieurs tentatives de rechargement automatique"
-            )
-            return
-        }
         playChannel(channel)
     }
 
@@ -846,15 +793,6 @@ class PlayerController(context: Context, private val settings: PlayerSettings, p
         /** Watchdog (§6, étape 5d) — voir [scheduleWatchdog]. */
         private const val SOFT_RETRY_AFTER_STALL_MS = 15_000L
         private const val HARD_RELOAD_AFTER_SOFT_RETRY_MS = 20_000L
-
-        /**
-         * Fix (2026-07-25) — voir la doc de [hardReloadAttempts]/[performHardReload].
-         * 5 tentatives x (15s + 20s) = ~2min55 de tentatives automatiques avant
-         * d'abandonner et d'afficher une erreur finale ; valeur pragmatique (comme
-         * [SOFT_RETRY_AFTER_STALL_MS]/[HARD_RELOAD_AFTER_SOFT_RETRY_MS] juste au-dessus),
-         * à ajuster une fois testée sur un flux réel durablement indisponible.
-         */
-        private const val HARD_RELOAD_MAX_ATTEMPTS = 5
 
         /** Journal d'erreurs Diagnostic (§5.5, étape 10) — voir [appendRecentError]. */
         const val RECENT_ERRORS_MAX = 10

@@ -14,7 +14,7 @@ package com.dpflix.android.nav
  * D-pad") mais suivent exactement les mêmes routes et le même aiguillage — pas de raison
  * de dupliquer ce contrat entre les deux points d'entrée.
  *
- * Cinq destinations, qui correspondent chacune à une sous-étape des étapes 6/7 (ou déjà
+ * Six destinations, qui correspondent chacune à une sous-étape des étapes 6/7/9 (ou déjà
  * livrée avant) :
  * - [Splash] : déjà livré (étape 2c), rebranché sur la navigation réelle (6a mobile,
  *   7a TV).
@@ -22,17 +22,11 @@ package com.dpflix.android.nav
  * - [Home] : contenu réel à l'étape 6c (mobile) et 7c (TV).
  * - [Settings] : contenu réel aux étapes 6d/6e/6f/6g (mobile). Encore un placeholder
  *   côté TV — contenu réel TV à venir (7e/7f/7g).
+ * - [EpgGuide] : squelette de grille EPG (§4.6, étape 9b1, mobile + TV ensemble) —
+ *   navigation temporelle/détail de programme à l'étape 9c.
  * - [PlayerFullscreen] : réutilise [com.dpflix.android.player.PlayerScreen] (étape 5),
  *   déjà fonctionnel sur les deux points d'entrée (validé au D-pad dès 5a) — seul le
  *   branchement à la navigation est nouveau ici.
- *
- * ## Écran Guide TV retiré (25 juillet 2026)
- * La destination `EpgGuide` (grille EPG plein écran, §4.6) a été retirée à la demande de
- * l'utilisateur : latence/gels constatés sur une playlist de 20000+ chaînes. Le reste de
- * la gestion EPG (téléchargement/parsing `EpgRepository`/`EpgXmlParser`, programme en
- * cours affiché sur l'OSD du lecteur, réglages EPG dans Réglages) est indépendant de cet
- * écran et reste inchangé — voir `EpgRepository` pour le détail de ce qui l'utilise
- * encore.
  */
 sealed class DpFlixDestination(val route: String) {
 
@@ -43,6 +37,8 @@ sealed class DpFlixDestination(val route: String) {
     object Home : DpFlixDestination("home")
 
     object Settings : DpFlixDestination("settings")
+
+    object EpgGuide : DpFlixDestination("epg_guide")
 
     /**
      * Lecture plein écran d'une chaîne. L'argument transporté est l'ID de la chaîne, pas

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,7 +42,6 @@ import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
 import com.dpflix.android.player.PlayerScreen
 import com.dpflix.android.repository.AppRepository
-import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.DpFlixBackground
 import com.dpflix.android.ui.theme.DpFlixColors
 import com.dpflix.android.ui.theme.DpFlixTheme
@@ -55,24 +55,24 @@ import com.dpflix.android.ui.theme.DpFlixTheme
  * Fond d'écran partagé avec l'onboarding (§4.4 "identique à l'onboarding") via
  * [DpFlixBackground], comme prévu dès l'étape 6b.
  *
- * ## Mini-lecteur et EPG (branché le 25 juillet 2026)
+ * ## Mini-lecteur et EPG
  * Le §4.4 décrit, sous la vidéo du mini-lecteur, "le nom de la chaîne + programme en
- * cours, si EPG disponible". Désormais résolu via [HomeViewModel.loadPreviewProgramTitle]
- * (même logique que l'OSD du lecteur plein écran, `PlayerScreen.currentProgramTitle`) et
- * exposé par [HomeUiState.previewProgramTitle] — `null` (donc rien affiché) si `tvgId`
- * est absent sur la chaîne ou si aucun guide EPG n'est disponible pour la playlist,
- * équivalent au cas "EPG indisponible" du cahier des charges.
+ * cours, si EPG disponible". Aucune couche EPG n'est encore branchée sur `AppRepository`
+ * à ce stade (`EpgXmlParser` existe depuis l'étape 3d mais sa persistance/son affichage
+ * sont prévus pour une étape ultérieure, voir 6b) : le mini-lecteur n'affiche donc que le
+ * nom de la chaîne pour l'instant, jamais de programme en cours — équivalent au cas "EPG
+ * indisponible" du cahier des charges, pas une régression à corriger ici.
  *
- * ## Bouton Guide TV retiré (25 juillet 2026)
- * L'accès au Guide TV ([com.dpflix.android.epg.EpgGuideScreen], §4.6) qui vivait ici
- * depuis l'étape 9b1 a été retiré à la demande de l'utilisateur (latence/gels sur une
- * playlist de 20000+ chaînes) — voir la doc de `DpFlixDestination` pour le détail de ce
- * qui reste de la gestion EPG (OSD, Réglages) indépendamment de cet écran.
+ * ## Accès au Guide TV (§4.6, étape 9b1)
+ * Nouveau bouton "Guide TV" à côté de Réglages, dans le même en-tête — navigue vers
+ * [com.dpflix.android.epg.EpgGuideScreen] (squelette de grille, sans lien de zapping
+ * depuis la grille pour l'instant : voir l'étape 9d).
  */
 @Composable
 fun HomeScreen(
     appRepository: AppRepository,
     onNavigateToSettings: () -> Unit,
+    onNavigateToEpgGuide: () -> Unit,
     onNavigateToPlayerFullscreen: (channelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -98,6 +98,13 @@ fun HomeScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Row {
+                        IconButton(onClick = onNavigateToEpgGuide) {
+                            Icon(
+                                imageVector = Icons.Filled.LiveTv,
+                                contentDescription = "Guide TV",
+                                tint = DpFlixColors.OnBackground
+                            )
+                        }
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
@@ -112,7 +119,6 @@ fun HomeScreen(
                 if (preview != null) {
                     MiniPlayer(
                         channel = preview,
-                        programTitle = uiState.previewProgramTitle,
                         onExpand = { onNavigateToPlayerFullscreen(preview.id) },
                         onDismiss = viewModel::dismissPreview
                     )
@@ -143,7 +149,7 @@ fun HomeScreen(
  * dessous. Bouton de fermeture ajouté (voir la doc de [HomeViewModel.dismissPreview]).
  */
 @Composable
-private fun MiniPlayer(channel: Channel, programTitle: String?, onExpand: () -> Unit, onDismiss: () -> Unit) {
+private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -175,15 +181,7 @@ private fun MiniPlayer(channel: Channel, programTitle: String?, onExpand: () -> 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            if (programTitle != null) {
-                Text(
-                    text = programTitle,
-                    color = DpFlixColors.OnBackgroundMuted,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            // Programme en cours : non affiché, voir la doc de HomeScreen (EPG pas encore branché).
         }
     }
 }
@@ -258,12 +256,7 @@ private fun ChannelCard(channel: Channel, isSelected: Boolean, onClick: () -> Un
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        // [Fix logos accueil] channel.logoUrl était collecté (M3U tvg-logo / Xtream
-        // stream_icon) et déjà utilisé dans l'OSD du lecteur, mais jamais affiché ici —
-        // voir la doc de com.dpflix.android.ui.ChannelLogo pour le détail.
-        ChannelLogo(channel = channel, size = 48.dp)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
             text = channel.name,
             color = DpFlixColors.OnBackground,

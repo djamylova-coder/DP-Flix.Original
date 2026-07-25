@@ -430,30 +430,20 @@ fun PlayerScreen(
     // prise d'antenne : le cache partage avec Reglages (bouton "Rafraichir l'EPG") evite
     // de retelecharger tout le guide XMLTV a chaque zap sur la meme playlist - remplace
     // l'ancien EpgNowLookup (sans cache, et qui visait un champ Playlist inexistant).
-    // Désactivé le 25 juillet 2026 à la demande de l'utilisateur : cette résolution EPG se
-    // déclenchait à l'entrée en plein écran (tap sur le mini-lecteur) en même temps que
-    // HomeViewModel.loadPreviewProgramTitle (encore en cours côté mini-lecteur à ce
-    // moment-là), créant un conflit perçu pendant la transition. Le Mutex par playlist
-    // (EpgRepository, fix du même jour) empêche déjà les deux appels de télécharger/parser
-    // en double, mais le second attend quand même la fin du premier - ce blocage au moment
-    // précis du passage plein écran restait perceptible. currentProgramTitle reste donc
-    // toujours `null` (cas déjà géré nativement partout où il est lu, voir PlayerOsd) :
-    // plus aucune requête EPG n'est émise pendant la lecture plein écran.
-    // Pour réactiver : décommenter le bloc ci-dessous.
-    // LaunchedEffect(currentChannel.id) {
-    //     currentProgramTitle = null
-    //     val repository = appRepository ?: return@LaunchedEffect
-    //     val activeChannel = currentChannel
-    //     val tvgId = activeChannel.tvgId
-    //     if (tvgId.isNullOrBlank()) return@LaunchedEffect
-    //     val playlist = repository.playlists.getById(activeChannel.playlistId) ?: return@LaunchedEffect
-    //     val result = repository.epg.getOrLoad(playlist)
-    //     currentProgramTitle = (result as? EpgLoadResult.Success)
-    //         ?.programsByChannel
-    //         ?.get(tvgId)
-    //         ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
-    //         ?.title
-    // }
+    LaunchedEffect(currentChannel.id) {
+        currentProgramTitle = null
+        val repository = appRepository ?: return@LaunchedEffect
+        val activeChannel = currentChannel
+        val tvgId = activeChannel.tvgId
+        if (tvgId.isNullOrBlank()) return@LaunchedEffect
+        val playlist = repository.playlists.getById(activeChannel.playlistId) ?: return@LaunchedEffect
+        val result = repository.epg.getOrLoad(playlist)
+        currentProgramTitle = (result as? EpgLoadResult.Success)
+            ?.programsByChannel
+            ?.get(tvgId)
+            ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
+            ?.title
+    }
 
     // Volume (8d5) : synchronisation inverse par rapport a 8d4 - suit les changements de
     // volume DECLENCHES AILLEURS (boutons physiques de l'appareil pendant que le plein
