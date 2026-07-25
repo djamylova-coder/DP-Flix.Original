@@ -46,6 +46,7 @@ import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
 import com.dpflix.android.player.PlayerScreen
 import com.dpflix.android.repository.AppRepository
+import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.DpFlixBackground
 import com.dpflix.android.ui.theme.DpFlixColors
 
@@ -301,6 +302,9 @@ private fun ChannelCardTv(
             channel.displayNumber?.let { number ->
                 Text(text = "$number", color = DpFlixColors.OnBackgroundMuted, fontSize = 14.sp)
             }
+            // [Fix logos accueil] voir la doc de com.dpflix.android.ui.ChannelLogo —
+            // même correctif que côté mobile (HomeScreen.ChannelCard).
+            ChannelLogo(channel = channel, size = 48.dp)
             Text(text = channel.name, color = DpFlixColors.OnBackground, fontSize = 16.sp)
             if (isSelected) {
                 Text(text = "En aperçu", color = DpFlixColors.Red, fontSize = 12.sp)

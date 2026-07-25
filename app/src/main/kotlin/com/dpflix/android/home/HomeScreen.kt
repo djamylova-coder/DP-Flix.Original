@@ -42,6 +42,7 @@ import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
 import com.dpflix.android.player.PlayerScreen
 import com.dpflix.android.repository.AppRepository
+import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.DpFlixBackground
 import com.dpflix.android.ui.theme.DpFlixColors
 import com.dpflix.android.ui.theme.DpFlixTheme
@@ -256,7 +257,12 @@ private fun ChannelCard(channel: Channel, isSelected: Boolean, onClick: () -> Un
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        // [Fix logos accueil] channel.logoUrl était collecté (M3U tvg-logo / Xtream
+        // stream_icon) et déjà utilisé dans l'OSD du lecteur, mais jamais affiché ici —
+        // voir la doc de com.dpflix.android.ui.ChannelLogo pour le détail.
+        ChannelLogo(channel = channel, size = 48.dp)
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = channel.name,
             color = DpFlixColors.OnBackground,
