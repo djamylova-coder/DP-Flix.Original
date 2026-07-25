@@ -226,47 +226,49 @@ class XtreamClient(
     private suspend fun fetchLiveChannelsByCategoryOnly(
         credentials: XtreamCredentials,
         playlistId: String
-    ): XtreamResult<XtreamLiveChannelsData>? = try {
-        val categoryNames = when (
-            val outcome = executeGet(
-                playerApiUrl(credentials, action = "get_live_categories"),
-                continueOnEmptyArray = true
-            )
-        ) {
-            is GetOutcome.Body -> parseCategories(outcome.text)
-            else -> return null
-        }
-        if (categoryNames.isEmpty()) return null
-
-        val channels = mutableListOf<Channel>()
-        var rawStreamCount = 0
-        for (categoryId in categoryNames.keys) {
-            val categoryOutcome = executeGet(
-                playerApiUrl(credentials, action = "get_live_streams", categoryId = categoryId),
-                continueOnEmptyArray = true
-            )
-            val (categoryChannels, categoryRawCount) = when (categoryOutcome) {
-                is GetOutcome.Body -> parseLiveStreams(categoryOutcome.text, credentials, playlistId, categoryNames)
-                    ?: continue
-                else -> continue
+    ): XtreamResult<XtreamLiveChannelsData>? {
+        return try {
+            val categoryNames = when (
+                val outcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_categories"),
+                    continueOnEmptyArray = true
+                )
+            ) {
+                is GetOutcome.Body -> parseCategories(outcome.text)
+                else -> return null
             }
-            channels += categoryChannels
-            rawStreamCount += categoryRawCount
-        }
-        if (channels.isEmpty()) return null
+            if (categoryNames.isEmpty()) return null
 
-        XtreamResult.Success(
-            XtreamLiveChannelsData(
-                channels = channels,
-                detectedEpgUrl = buildEpgUrl(credentials),
-                rawStreamCount = rawStreamCount
+            val channels = mutableListOf<Channel>()
+            var rawStreamCount = 0
+            for (categoryId in categoryNames.keys) {
+                val categoryOutcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_streams", categoryId = categoryId),
+                    continueOnEmptyArray = true
+                )
+                val (categoryChannels, categoryRawCount) = when (categoryOutcome) {
+                    is GetOutcome.Body -> parseLiveStreams(categoryOutcome.text, credentials, playlistId, categoryNames)
+                        ?: continue
+                    else -> continue
+                }
+                channels += categoryChannels
+                rawStreamCount += categoryRawCount
+            }
+            if (channels.isEmpty()) return null
+
+            XtreamResult.Success(
+                XtreamLiveChannelsData(
+                    channels = channels,
+                    detectedEpgUrl = buildEpgUrl(credentials),
+                    rawStreamCount = rawStreamCount
+                )
             )
-        )
-    } catch (e: OutOfMemoryError) {
-        // Même une catégorie individuelle peut en théorie être énorme sur un panel
-        // extrême : on abandonne proprement plutôt que de boucler indéfiniment sur
-        // les catégories restantes avec une mémoire déjà sous pression.
-        null
+        } catch (e: OutOfMemoryError) {
+            // Même une catégorie individuelle peut en théorie être énorme sur un panel
+            // extrême : on abandonne proprement plutôt que de boucler indéfiniment sur
+            // les catégories restantes avec une mémoire déjà sous pression.
+            null
+        }
     }
 
     /**
