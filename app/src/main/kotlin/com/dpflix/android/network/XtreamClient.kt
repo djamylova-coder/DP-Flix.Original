@@ -130,7 +130,7 @@ class XtreamClient(
             is GetOutcome.Body -> parseCategories(outcome.text)
         }
 
-        val (channels, rawStreamCount) = when (
+        var (channels, rawStreamCount) = when (
             val outcome = executeGet(
                 playerApiUrl(credentials, action = "get_live_streams"),
                 continueOnEmptyArray = true
@@ -140,6 +140,39 @@ class XtreamClient(
             is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
             is GetOutcome.Body -> parseLiveStreams(outcome.text, credentials, playlistId, categoryNames)
                 ?: return@withContext XtreamResult.ServerError(unparsableStreamsMessage(outcome.text))
+        }
+
+        // Fix (2026-07-25) : repli par catégorie pour les gros panels. Certains panels
+        // Xtream (vus sur des comptes à très nombreuses chaînes) répondent volontairement
+        // "[]" à `get_live_streams` SANS `category_id` — même après la cascade de
+        // User-Agent et le fix "catalogue restreint" ci-dessus — pour éviter de servir
+        // des dizaines de milliers d'entrées en un seul appel non filtré, mais répondent
+        // normalement dès qu'on précise une catégorie. Sans ce repli, ces panels
+        // affichaient "0 chaîne" alors que le compte est parfaitement valide et chargé.
+        // Déclenché UNIQUEMENT si l'appel global n'a strictement rien renvoyé (pas de
+        // fausse activation sur un compte réellement vide sans catégories) ; requêtes
+        // séquentielles catégorie par catégorie, acceptables ici car ce chemin ne
+        // s'exécute que quand le chemin rapide a déjà échoué.
+        if (channels.isEmpty() && rawStreamCount == 0 && categoryNames.isNotEmpty()) {
+            val perCategoryChannels = mutableListOf<Channel>()
+            var perCategoryRawCount = 0
+            for (categoryId in categoryNames.keys) {
+                val categoryOutcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_streams", categoryId = categoryId),
+                    continueOnEmptyArray = true
+                )
+                val (categoryChannels, categoryRawCount) = when (categoryOutcome) {
+                    is GetOutcome.Body -> parseLiveStreams(categoryOutcome.text, credentials, playlistId, categoryNames)
+                        ?: continue // Catégorie illisible isolément : ignorée, pas fatale pour les autres.
+                    else -> continue // Erreur réseau/HTTP isolée à cette catégorie : idem.
+                }
+                perCategoryChannels += categoryChannels
+                perCategoryRawCount += categoryRawCount
+            }
+            if (perCategoryChannels.isNotEmpty()) {
+                channels = perCategoryChannels
+                rawStreamCount = perCategoryRawCount
+            }
         }
 
         XtreamResult.Success(
@@ -186,7 +219,8 @@ class XtreamClient(
 
     private fun playerApiUrl(
         credentials: XtreamCredentials,
-        action: String? = null
+        action: String? = null,
+        categoryId: String? = null
     ): String {
         val builder = StringBuilder(baseUrl(credentials.serverUrl))
             .append("/player_api.php")
@@ -194,6 +228,9 @@ class XtreamClient(
             .append("&password=").append(encode(credentials.password))
         if (action != null) {
             builder.append("&action=").append(action)
+        }
+        if (categoryId != null) {
+            builder.append("&category_id=").append(encode(categoryId))
         }
         return builder.toString()
     }
