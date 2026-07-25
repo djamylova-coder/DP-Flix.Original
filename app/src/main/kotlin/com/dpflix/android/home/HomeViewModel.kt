@@ -85,30 +85,36 @@ class HomeViewModel(private val appRepository: AppRepository) : ViewModel() {
      * comportement déjà choisi pour l'OSD.
      */
     private fun loadPreviewProgramTitle(channel: Channel) {
-        previewProgramJob?.cancel()
-        val tvgId = channel.tvgId
-        if (tvgId.isNullOrBlank()) return
-        previewProgramJob = viewModelScope.launch {
-            val playlist = appRepository.playlists.getById(channel.playlistId) ?: return@launch
-            val result = appRepository.epg.getOrLoad(playlist)
-            val title = (result as? EpgLoadResult.Success)
-                ?.programsByChannel
-                ?.get(tvgId)
-                ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
-                ?.title
-            // Le previewChannel a pu changer (ou être fermé) pendant la résolution :
-            // on ne réapplique le résultat que s'il concerne toujours la chaîne
-            // actuellement prévisualisée (previewProgramJob.cancel() couvre déjà le cas
-            // normal, mais une résolution presque terminée au moment du cancel peut
-            // encore livrer sa valeur juste après).
-            _uiState.update { current ->
-                if (current.previewChannel?.id == channel.id) {
-                    current.copy(previewProgramTitle = title)
-                } else {
-                    current
-                }
-            }
-        }
+        // Désactivé le 25 juillet 2026 à la demande de l'utilisateur : cette résolution EPG
+        // (mini-lecteur, accueil) pouvait encore être en vol au moment où l'utilisateur
+        // tape sur le mini-lecteur pour passer en plein écran, juste au moment où
+        // PlayerScreen.currentProgramTitle lançait sa propre résolution sur la même
+        // playlist - conflit perçu pendant la transition. Plutôt que de compter sur le
+        // Mutex d'EpgRepository (qui sérialise déjà les deux, mais fait donc attendre le
+        // second), on supprime purement et simplement la source côté mini-lecteur :
+        // previewProgramTitle reste toujours `null`, déjà géré nativement (voir
+        // HomeScreen.MiniPlayer, `if (programTitle != null)`). previewProgramJob n'est
+        // donc plus jamais lancé - dismissPreview() continue de l'annuler sans effet.
+        // Pour réactiver : décommenter le bloc ci-dessous.
+        // previewProgramJob?.cancel()
+        // val tvgId = channel.tvgId
+        // if (tvgId.isNullOrBlank()) return
+        // previewProgramJob = viewModelScope.launch {
+        //     val playlist = appRepository.playlists.getById(channel.playlistId) ?: return@launch
+        //     val result = appRepository.epg.getOrLoad(playlist)
+        //     val title = (result as? EpgLoadResult.Success)
+        //         ?.programsByChannel
+        //         ?.get(tvgId)
+        //         ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
+        //         ?.title
+        //     _uiState.update { current ->
+        //         if (current.previewChannel?.id == channel.id) {
+        //             current.copy(previewProgramTitle = title)
+        //         } else {
+        //             current
+        //         }
+        //     }
+        // }
     }
 
     /**

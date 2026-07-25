@@ -1,5 +1,7 @@
 package com.dpflix.android.nav
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,7 +67,17 @@ fun DpFlixTvNavHost(
     appRepository: AppRepository,
     navController: NavHostController = rememberNavController()
 ) {
-    NavHost(navController = navController, startDestination = DpFlixDestination.Splash.route) {
+    // Fix (25 juillet 2026) — même correctif que DpFlixNavHost (mobile), voir sa doc :
+    // évite le chevauchement de deux ExoPlayer actifs (mini-lecteur + plein écran)
+    // pendant l'animation de transition par défaut.
+    NavHost(
+        navController = navController,
+        startDestination = DpFlixDestination.Splash.route,
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None }
+    ) {
 
         composable(DpFlixDestination.Splash.route) {
             SplashScreen(

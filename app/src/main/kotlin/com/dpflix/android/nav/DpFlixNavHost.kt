@@ -1,5 +1,7 @@
 package com.dpflix.android.nav
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,7 +67,32 @@ fun DpFlixNavHost(
     appRepository: AppRepository,
     navController: NavHostController = rememberNavController()
 ) {
-    NavHost(navController = navController, startDestination = DpFlixDestination.Splash.route) {
+    // Fix (25 juillet 2026) : crash net à l'entrée en plein écran depuis le mini-lecteur
+    // ("l'application s'arrête net, retour à l'accueil du téléphone, parfois notification
+    // Android d'un bug"). Cause probable : NavHost anime par défaut (fondu enchaîné,
+    // AnimatedContent) chaque changement de destination — pendant toute la durée de cette
+    // animation, l'ancienne destination (Home, avec son mini-lecteur donc SON propre
+    // ExoPlayer/décodeur matériel actif, voir PlayerScreen/PlayerController) reste
+    // composée EN MÊME TEMPS que la nouvelle (PlayerFullscreen, qui crée un SECOND
+    // ExoPlayer sur la même chaîne). Deux décodeurs vidéo matériels actifs
+    // simultanément est une situation que beaucoup de téléphones (surtout entrée/milieu
+    // de gamme, ressources MediaCodec limitées) ne supportent pas et qui peut faire
+    // planter tout le processus au lieu de lever une exception Java proprement
+    // rattrapable — cohérent avec un arrêt net sans écran d'erreur applicatif.
+    // enterTransition/exitTransition à None rendent les transitions instantanées : le
+    // mini-lecteur (et son ExoPlayer, libéré par le DisposableEffect(channel.id) de
+    // PlayerScreen) disparaît immédiatement au lieu de rester visible/actif pendant un
+    // fondu, supprimant la fenêtre de chevauchement. Contrepartie assumée : les
+    // transitions entre écrans (Accueil ↔ Réglages ↔ Lecteur plein écran) sont
+    // désormais des coupures franches plutôt que des fondus enchaînés.
+    NavHost(
+        navController = navController,
+        startDestination = DpFlixDestination.Splash.route,
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None }
+    ) {
 
         composable(DpFlixDestination.Splash.route) {
             SplashScreen(
