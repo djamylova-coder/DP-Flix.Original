@@ -25,7 +25,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.dpflix.android.epg.EpgGuideScreen
 import com.dpflix.android.home.HomeScreen
 import com.dpflix.android.model.Channel
 import com.dpflix.android.onboarding.OnboardingScreen
@@ -119,17 +118,6 @@ fun DpFlixNavHost(
             HomeScreen(
                 appRepository = appRepository,
                 onNavigateToSettings = { navController.navigate(DpFlixDestination.Settings.route) },
-                onNavigateToEpgGuide = { navController.navigate(DpFlixDestination.EpgGuide.route) },
-                onNavigateToPlayerFullscreen = { channelId ->
-                    navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
-                }
-            )
-        }
-
-        composable(DpFlixDestination.EpgGuide.route) {
-            EpgGuideScreen(
-                appRepository = appRepository,
-                onBack = { navController.popBackStack() },
                 onNavigateToPlayerFullscreen = { channelId ->
                     navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
                 }

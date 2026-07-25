@@ -27,7 +27,6 @@ import androidx.navigation.navArgument
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.dpflix.android.epg.EpgGuideScreenTv
 import com.dpflix.android.home.HomeScreenTv
 import com.dpflix.android.model.Channel
 import com.dpflix.android.onboarding.OnboardingScreenTv
@@ -108,17 +107,6 @@ fun DpFlixTvNavHost(
             HomeScreenTv(
                 appRepository = appRepository,
                 onNavigateToSettings = { navController.navigate(DpFlixDestination.Settings.route) },
-                onNavigateToEpgGuide = { navController.navigate(DpFlixDestination.EpgGuide.route) },
-                onNavigateToPlayerFullscreen = { channelId ->
-                    navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
-                }
-            )
-        }
-
-        composable(DpFlixDestination.EpgGuide.route) {
-            EpgGuideScreenTv(
-                appRepository = appRepository,
-                onBack = { navController.popBackStack() },
                 onNavigateToPlayerFullscreen = { channelId ->
                     navController.navigate(DpFlixDestination.PlayerFullscreen.createRoute(channelId))
                 }

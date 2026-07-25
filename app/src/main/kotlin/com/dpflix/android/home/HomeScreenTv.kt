@@ -86,15 +86,16 @@ import com.dpflix.android.ui.theme.DpFlixColors
  * contenu vidéo. Bouton de fermeture Material3 réutilisé tel quel (mobile, 6c) : reste
  * focusable/cliquable au D-pad comme n'importe quel composant Compose standard.
  *
- * ## Accès au Guide TV (§4.6, étape 9b1)
- * Nouveau bouton "Guide TV" à côté de "Réglages", même équivalent TV du bouton mobile
- * (voir la doc de [HomeScreen]) — navigue vers [com.dpflix.android.epg.EpgGuideScreenTv].
+ * ## Bouton Guide TV retiré (25 juillet 2026)
+ * Le bouton "Guide TV" ([com.dpflix.android.epg.EpgGuideScreenTv], §4.6) qui vivait ici
+ * depuis l'étape 9b1 a été retiré à la demande de l'utilisateur (latence/gels sur une
+ * playlist de 20000+ chaînes) — voir la doc de [HomeScreen]/`DpFlixDestination` pour le
+ * détail de ce qui reste de la gestion EPG indépendamment de cet écran.
  */
 @Composable
 fun HomeScreenTv(
     appRepository: AppRepository,
     onNavigateToSettings: () -> Unit,
-    onNavigateToEpgGuide: () -> Unit,
     onNavigateToPlayerFullscreen: (channelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -103,7 +104,6 @@ fun HomeScreenTv(
     )
     val uiState by viewModel.uiState.collectAsState()
 
-    val epgGuideFocusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
     val firstChannelFocusRequester = remember { FocusRequester() }
     var hasRequestedInitialFocus by remember { mutableStateOf(false) }
@@ -120,12 +120,6 @@ fun HomeScreenTv(
                 ) {
                     Text(text = "DP-Flix", color = DpFlixColors.OnBackground, fontSize = 28.sp)
                     Row {
-                        Button(
-                            onClick = onNavigateToEpgGuide,
-                            modifier = Modifier.focusRequester(epgGuideFocusRequester)
-                        ) {
-                            Text("Guide TV")
-                        }
                         Button(
                             onClick = onNavigateToSettings,
                             modifier = Modifier

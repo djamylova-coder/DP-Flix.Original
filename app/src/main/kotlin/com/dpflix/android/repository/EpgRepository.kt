@@ -102,7 +102,20 @@ class EpgRepository(context: Context) {
         val bytes = loadRawBytes(playlist).getOrElse { error ->
             return EpgLoadResult.Unavailable(error.message ?: "Erreur inconnue")
         }
-        val programs = EpgXmlParser.parse(bytes)
+        // Fix (2026-07-25) : `EpgXmlParser.parse` est un parsing XML pur CPU (pas d'IO),
+        // potentiellement des centaines de milliers de <programme> pour un panel à
+        // plusieurs dizaines de milliers de chaînes. `load` était encore appelé, au
+        // moment de ce correctif, depuis l'écran Guide TV (`EpgGuideViewModel.init` via
+        // `viewModelScope.launch { ... }`, retiré depuis, voir `DpFlixDestination`) —
+        // dispatcher par défaut `Main.immediate`, donc sans ce `withContext` tout ce
+        // parsing s'exécutait sur le thread UI, gelant l'app le temps du parsing complet
+        // (plusieurs secondes, voire plus, sur un gros guide). Reste valable pour les
+        // appelants actuels (OSD "programme en cours" du lecteur, Réglages → EPG) :
+        // ce sont aussi des `ViewModel`/`Composable` sur Main, le correctif s'applique
+        // ici une fois pour toutes plutôt qu'à charge de chaque appelant.
+        // `Dispatchers.Default` (pas `IO`) car c'est un travail CPU, pas une attente
+        // réseau/disque.
+        val programs = withContext(Dispatchers.Default) { EpgXmlParser.parse(bytes) }
         EpgLoadResult.Success(programs.groupBy { it.channelTvgId })
     } catch (e: IllegalArgumentException) {
         EpgLoadResult.Unavailable(e.message ?: "Fichier EPG invalide")
@@ -111,8 +124,8 @@ class EpgRepository(context: Context) {
         // plusieurs dizaines de Mo / centaines de milliers de <programme> : les octets
         // bruts puis la liste `programs` construite par le parseur sont entièrement en
         // mémoire (§ doc de classe). OutOfMemoryError n'est pas une Exception (c'est une
-        // Error), donc sans ce catch elle remontait non rattrapée à travers
-        // EpgGuideViewModel et tuait tout le process — pas seulement l'EPG. On ne
+        // Error), donc sans ce catch elle remontait non rattrapée à travers l'appelant
+        // (OSD/Réglages) et tuait tout le process — pas seulement l'EPG. On ne
         // conserve aucune référence à `bytes`/`programs` en sortant de ce bloc, pour
         // laisser le GC récupérer la mémoire au plus vite plutôt que de retenter quoi
         // que ce soit.

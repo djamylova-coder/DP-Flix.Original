@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,16 +63,16 @@ import com.dpflix.android.ui.theme.DpFlixTheme
  * nom de la chaîne pour l'instant, jamais de programme en cours — équivalent au cas "EPG
  * indisponible" du cahier des charges, pas une régression à corriger ici.
  *
- * ## Accès au Guide TV (§4.6, étape 9b1)
- * Nouveau bouton "Guide TV" à côté de Réglages, dans le même en-tête — navigue vers
- * [com.dpflix.android.epg.EpgGuideScreen] (squelette de grille, sans lien de zapping
- * depuis la grille pour l'instant : voir l'étape 9d).
+ * ## Bouton Guide TV retiré (25 juillet 2026)
+ * L'accès au Guide TV ([com.dpflix.android.epg.EpgGuideScreen], §4.6) qui vivait ici
+ * depuis l'étape 9b1 a été retiré à la demande de l'utilisateur (latence/gels sur une
+ * playlist de 20000+ chaînes) — voir la doc de `DpFlixDestination` pour le détail de ce
+ * qui reste de la gestion EPG (OSD, Réglages) indépendamment de cet écran.
  */
 @Composable
 fun HomeScreen(
     appRepository: AppRepository,
     onNavigateToSettings: () -> Unit,
-    onNavigateToEpgGuide: () -> Unit,
     onNavigateToPlayerFullscreen: (channelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -99,13 +98,6 @@ fun HomeScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Row {
-                        IconButton(onClick = onNavigateToEpgGuide) {
-                            Icon(
-                                imageVector = Icons.Filled.LiveTv,
-                                contentDescription = "Guide TV",
-                                tint = DpFlixColors.OnBackground
-                            )
-                        }
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
