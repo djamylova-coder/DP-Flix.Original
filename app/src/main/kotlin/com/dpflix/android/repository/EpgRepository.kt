@@ -93,16 +93,30 @@ class EpgRepository(context: Context) {
         cache.clear()
     }
 
-    private suspend fun load(playlist: Playlist): EpgLoadResult {
+    private suspend fun load(playlist: Playlist): EpgLoadResult = try {
+        // Le téléchargement/la lecture du fichier brut (`loadRawBytes`, ex. `response
+        // .body?.bytes()` dans `downloadUrl`) peut à lui seul saturer la mémoire sur un
+        // guide de plusieurs dizaines de Mo — avant même d'atteindre `EpgXmlParser.parse`.
+        // Les deux étapes sont donc couvertes par le même bloc `try`, plutôt que de ne
+        // protéger que le parsing.
         val bytes = loadRawBytes(playlist).getOrElse { error ->
             return EpgLoadResult.Unavailable(error.message ?: "Erreur inconnue")
         }
-        return try {
-            val programs = EpgXmlParser.parse(bytes)
-            EpgLoadResult.Success(programs.groupBy { it.channelTvgId })
-        } catch (e: IllegalArgumentException) {
-            EpgLoadResult.Unavailable(e.message ?: "Fichier EPG invalide")
-        }
+        val programs = EpgXmlParser.parse(bytes)
+        EpgLoadResult.Success(programs.groupBy { it.channelTvgId })
+    } catch (e: IllegalArgumentException) {
+        EpgLoadResult.Unavailable(e.message ?: "Fichier EPG invalide")
+    } catch (e: OutOfMemoryError) {
+        // Un panel avec des dizaines de milliers de chaînes peut exposer un XMLTV de
+        // plusieurs dizaines de Mo / centaines de milliers de <programme> : les octets
+        // bruts puis la liste `programs` construite par le parseur sont entièrement en
+        // mémoire (§ doc de classe). OutOfMemoryError n'est pas une Exception (c'est une
+        // Error), donc sans ce catch elle remontait non rattrapée à travers
+        // EpgGuideViewModel et tuait tout le process — pas seulement l'EPG. On ne
+        // conserve aucune référence à `bytes`/`programs` en sortant de ce bloc, pour
+        // laisser le GC récupérer la mémoire au plus vite plutôt que de retenter quoi
+        // que ce soit.
+        EpgLoadResult.Unavailable("Guide EPG trop volumineux pour être chargé en mémoire")
     }
 
     /** Même ordre de priorité que l'ex-`SettingsViewModel.resolveEpgSource` (6g-2-2) :
