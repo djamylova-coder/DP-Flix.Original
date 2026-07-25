@@ -4,7 +4,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -29,6 +32,18 @@ import com.dpflix.android.ui.theme.DpFlixColors
  * [content] est dessiné par-dessus, la responsabilité de ce composable s'arrêtant au
  * fond — la disposition propre à chaque écran (onboarding, accueil) reste définie par
  * son propre composable.
+ *
+ * ## Insets système (fix 2026-07-25)
+ * Depuis le passage en edge-to-edge (`decorFitsSystemWindows = false`, voir
+ * `README-fix-edge-to-edge-immersif.md`), le système ne réserve plus automatiquement la
+ * place des barres de statut/navigation. Le [Canvas] du fond continue volontairement de
+ * s'étendre plein écran (`fillMaxSize`, sans padding) pour un rendu edge-to-edge propre
+ * — c'est le contenu réel des écrans (titres, icônes, listes) qui doit en revanche rester
+ * lisible sous l'encoche/la barre de statut et au-dessus de la barre de navigation. On
+ * applique donc `windowInsetsPadding(WindowInsets.systemBars)` uniquement autour de
+ * [content], dans un `Box` interne : sans ce fix, l'en-tête (ex. titre "DP-Flix" +
+ * boutons Guide TV/Réglages sur l'accueil) se dessinait partiellement derrière la barre
+ * de statut. Sur TV (pas de barres système), ce padding est nul et n'a aucun effet.
  */
 @Composable
 fun DpFlixBackground(
@@ -42,7 +57,12 @@ fun DpFlixBackground(
             drawWater()
             drawRedBeamWithReflection()
         }
-        content()
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars),
+            content = content
+        )
     }
 }
 
