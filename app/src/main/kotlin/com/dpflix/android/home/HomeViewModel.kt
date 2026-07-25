@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dpflix.android.model.Channel
+import com.dpflix.android.model.EpgLoadResult
 import com.dpflix.android.repository.AppRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,10 +24,16 @@ import kotlinx.coroutines.launch
  * pour que l'accueil se remette à jour tout seul si l'utilisateur bascule de playlist
  * depuis Réglages (§4.3/§5.2, étape 6f) sans revenir en arrière puis rouvrir l'app.
  */
-class HomeViewModel(appRepository: AppRepository) : ViewModel() {
+class HomeViewModel(private val appRepository: AppRepository) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    /** Résolution EPG en cours pour [HomeUiState.previewProgramTitle] — un seul à la fois,
+     *  annulé avant chaque nouvelle prévisualisation pour qu'une réponse tardive sur une
+     *  chaîne déjà quittée n'écrase pas l'état de la chaîne suivante (même précaution que
+     *  `PlayerScreen`, clé sur la chaîne prévisualisée plutôt qu'un tick périodique). */
+    private var previewProgramJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -60,8 +68,47 @@ class HomeViewModel(appRepository: AppRepository) : ViewModel() {
     fun onChannelClicked(channel: Channel): Boolean {
         val alreadyPreviewing = _uiState.value.previewChannel?.id == channel.id
         if (alreadyPreviewing) return true
-        _uiState.update { it.copy(previewChannel = channel) }
+        _uiState.update { it.copy(previewChannel = channel, previewProgramTitle = null) }
+        loadPreviewProgramTitle(channel)
         return false
+    }
+
+    /**
+     * Programme en cours (§4.4/4.6) du mini-lecteur — même logique de résolution que
+     * l'OSD du lecteur plein écran (`PlayerScreen.currentProgramTitle`, voir sa doc) :
+     * `tvgId` requis, playlist résolue, [com.dpflix.android.repository.EpgRepository
+     * .getOrLoad] (cache déjà partagé avec Réglages/le lecteur, donc pas de nouveau
+     * téléchargement si le guide est déjà en mémoire), programme dont l'intervalle
+     * contient l'instant présent. Silencieux (reste à `null`, équivalent "EPG non
+     * disponible" du §4.6) si `tvgId` est absent, si la playlist n'existe plus, ou si
+     * [EpgLoadResult] est un échec — jamais d'erreur affichée ici, cohérent avec le
+     * comportement déjà choisi pour l'OSD.
+     */
+    private fun loadPreviewProgramTitle(channel: Channel) {
+        previewProgramJob?.cancel()
+        val tvgId = channel.tvgId
+        if (tvgId.isNullOrBlank()) return
+        previewProgramJob = viewModelScope.launch {
+            val playlist = appRepository.playlists.getById(channel.playlistId) ?: return@launch
+            val result = appRepository.epg.getOrLoad(playlist)
+            val title = (result as? EpgLoadResult.Success)
+                ?.programsByChannel
+                ?.get(tvgId)
+                ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
+                ?.title
+            // Le previewChannel a pu changer (ou être fermé) pendant la résolution :
+            // on ne réapplique le résultat que s'il concerne toujours la chaîne
+            // actuellement prévisualisée (previewProgramJob.cancel() couvre déjà le cas
+            // normal, mais une résolution presque terminée au moment du cancel peut
+            // encore livrer sa valeur juste après).
+            _uiState.update { current ->
+                if (current.previewChannel?.id == channel.id) {
+                    current.copy(previewProgramTitle = title)
+                } else {
+                    current
+                }
+            }
+        }
     }
 
     /**
@@ -72,7 +119,8 @@ class HomeViewModel(appRepository: AppRepository) : ViewModel() {
      * fermeture sur [com.dpflix.android.home.HomeScreen].
      */
     fun dismissPreview() {
-        _uiState.update { it.copy(previewChannel = null) }
+        previewProgramJob?.cancel()
+        _uiState.update { it.copy(previewChannel = null, previewProgramTitle = null) }
     }
 }
 

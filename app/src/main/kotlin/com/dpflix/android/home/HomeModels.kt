@@ -16,9 +16,15 @@ import com.dpflix.android.model.ChannelCategory
  *   par [com.dpflix.android.repository.ChannelRepository.observeGroupedByCategory].
  * @property previewChannel Chaîne actuellement ouverte dans le mini-lecteur (§4.4 "Zone
  *   haute"), `null` tant qu'aucune chaîne n'a encore été cliquée.
+ * @property previewProgramTitle Programme en cours de [previewChannel] pour l'EPG,
+ *   affiché sous le nom de la chaîne dans le mini-lecteur (§4.4 "nom de la chaîne +
+ *   programme en cours, si EPG disponible") — `null` tant que non résolu ou si l'EPG
+ *   n'est pas disponible pour cette chaîne (voir [HomeViewModel.loadPreviewProgramTitle]
+ *   pour la logique de résolution, identique à l'OSD du lecteur plein écran).
  */
 data class HomeUiState(
     val hasActivePlaylist: Boolean = false,
     val categories: List<ChannelCategory> = emptyList(),
-    val previewChannel: Channel? = null
+    val previewChannel: Channel? = null,
+    val previewProgramTitle: String? = null
 )

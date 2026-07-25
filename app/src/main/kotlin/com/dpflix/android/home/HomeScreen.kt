@@ -55,13 +55,13 @@ import com.dpflix.android.ui.theme.DpFlixTheme
  * Fond d'écran partagé avec l'onboarding (§4.4 "identique à l'onboarding") via
  * [DpFlixBackground], comme prévu dès l'étape 6b.
  *
- * ## Mini-lecteur et EPG
+ * ## Mini-lecteur et EPG (branché le 25 juillet 2026)
  * Le §4.4 décrit, sous la vidéo du mini-lecteur, "le nom de la chaîne + programme en
- * cours, si EPG disponible". Aucune couche EPG n'est encore branchée sur `AppRepository`
- * à ce stade (`EpgXmlParser` existe depuis l'étape 3d mais sa persistance/son affichage
- * sont prévus pour une étape ultérieure, voir 6b) : le mini-lecteur n'affiche donc que le
- * nom de la chaîne pour l'instant, jamais de programme en cours — équivalent au cas "EPG
- * indisponible" du cahier des charges, pas une régression à corriger ici.
+ * cours, si EPG disponible". Désormais résolu via [HomeViewModel.loadPreviewProgramTitle]
+ * (même logique que l'OSD du lecteur plein écran, `PlayerScreen.currentProgramTitle`) et
+ * exposé par [HomeUiState.previewProgramTitle] — `null` (donc rien affiché) si `tvgId`
+ * est absent sur la chaîne ou si aucun guide EPG n'est disponible pour la playlist,
+ * équivalent au cas "EPG indisponible" du cahier des charges.
  *
  * ## Bouton Guide TV retiré (25 juillet 2026)
  * L'accès au Guide TV ([com.dpflix.android.epg.EpgGuideScreen], §4.6) qui vivait ici
@@ -112,6 +112,7 @@ fun HomeScreen(
                 if (preview != null) {
                     MiniPlayer(
                         channel = preview,
+                        programTitle = uiState.previewProgramTitle,
                         onExpand = { onNavigateToPlayerFullscreen(preview.id) },
                         onDismiss = viewModel::dismissPreview
                     )
@@ -142,7 +143,7 @@ fun HomeScreen(
  * dessous. Bouton de fermeture ajouté (voir la doc de [HomeViewModel.dismissPreview]).
  */
 @Composable
-private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> Unit) {
+private fun MiniPlayer(channel: Channel, programTitle: String?, onExpand: () -> Unit, onDismiss: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -174,7 +175,15 @@ private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            // Programme en cours : non affiché, voir la doc de HomeScreen (EPG pas encore branché).
+            if (programTitle != null) {
+                Text(
+                    text = programTitle,
+                    color = DpFlixColors.OnBackgroundMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

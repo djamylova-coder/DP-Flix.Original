@@ -135,6 +135,7 @@ fun HomeScreenTv(
                 if (preview != null) {
                     MiniPlayerTv(
                         channel = preview,
+                        programTitle = uiState.previewProgramTitle,
                         onExpand = { onNavigateToPlayerFullscreen(preview.id) },
                         onDismiss = viewModel::dismissPreview
                     )
@@ -170,11 +171,11 @@ fun HomeScreenTv(
 /**
  * Zone haute (§4.4), équivalent TV de `MiniPlayer` (mobile, `HomeScreen.kt`) — voir la
  * doc de [HomeScreenTv] sur le choix d'un `Box` focusable plutôt qu'un [Button] ici.
- * Même absence d'infos EPG que côté mobile : voir la doc de [HomeScreen] à ce sujet,
- * inchangée à cette sous-étape.
+ * Même programme en cours que côté mobile, résolu par le même [HomeViewModel] partagé
+ * (voir sa doc et celle de [HomeScreen] sur [HomeUiState.previewProgramTitle]).
  */
 @Composable
-private fun MiniPlayerTv(channel: Channel, onExpand: () -> Unit, onDismiss: () -> Unit) {
+private fun MiniPlayerTv(channel: Channel, programTitle: String?, onExpand: () -> Unit, onDismiss: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
 
     Column(
@@ -212,7 +213,13 @@ private fun MiniPlayerTv(channel: Channel, onExpand: () -> Unit, onDismiss: () -
             fontSize = 20.sp,
             modifier = Modifier.padding(top = 8.dp)
         )
-        // Programme en cours : non affiché, voir la doc de HomeScreenTv (EPG pas encore branché).
+        if (programTitle != null) {
+            Text(
+                text = programTitle,
+                color = DpFlixColors.OnBackgroundMuted,
+                fontSize = 16.sp
+            )
+        }
     }
 }
 
