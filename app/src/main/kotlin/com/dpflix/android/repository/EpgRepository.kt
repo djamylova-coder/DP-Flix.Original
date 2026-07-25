@@ -56,6 +56,34 @@ class EpgRepository(context: Context) {
      *  (mono-utilisateur, mono-appareil), une `Map` mutable simple suffit. */
     private val cache = mutableMapOf<String, EpgLoadResult>()
 
+    /**
+     * Fix (2026-07-25, crash au passage en plein écran sur un Xtream 11 000+ chaînes) :
+     * fenêtre de rétention passée à [EpgXmlParser.parse] — voir sa doc pour le détail du
+     * mécanisme. Seul l'OSD "programme en cours" (`PlayerScreen`) et le statut de Réglages
+     * consomment [EpgLoadResult.Success.programsByChannel] (voir `README-retrait-ecran-
+     * guide-tv.md` : l'écran de grille qui aurait pu justifier plusieurs jours a été retiré),
+     * donc pas besoin de garder plus qu'une marge confortable autour de l'instant présent.
+     *
+     * `EPG_KEEP_FUTURE_MILLIS` (48h) reste volontairement généreux malgré ça : le cache
+     * n'a pas de TTL (voir la doc de classe) et vit tant que le process tourne — sans cette
+     * marge, une session laissée ouverte plusieurs heures verrait son "programme en cours"
+     * cesser de se mettre à jour dès que l'horloge dépasse la fenêtre calculée au chargement
+     * initial, pour un guide qui ne serait rechargé qu'au prochain "Rafraîchir l'EPG" manuel.
+     *
+     * Ce correctif traite la CAUSE du crash (des millions de [com.dpflix.android.model.
+     * EpgProgram] retenus indéfiniment pour un guide à 11 000+ chaînes, largement plus que
+     * ce qu'un mobile bas/moyen de gamme peut allouer) ; le `catch (OutOfMemoryError)` déjà
+     * présent dans [load] reste un filet de sécurité pour les cas non couverts (guide encore
+     * plus massif que prévu, autre pic mémoire concurrent), mais ne suffisait pas seul :
+     * il ne rattrape que l'OOM du tas Dalvik/ART de l'app, pas un process tué directement
+     * par le système (low memory killer) quand la mémoire TOTALE de l'appareil est sous
+     * pression — ce qui se manifeste exactement comme décrit (l'app disparaît d'un coup,
+     * retour à l'accueil du téléphone, sans dialogue de plantage) et que ce correctif vise
+     * à éviter en amont en ne laissant plus la mémoire monter aussi haut.
+     */
+    private val epgKeepPastMillis = 3L * 60 * 60 * 1000
+    private val epgKeepFutureMillis = 48L * 60 * 60 * 1000
+
     /** Résultat déjà en cache pour [playlistId], ou `null` si jamais chargé depuis le
      *  lancement de l'app (voir [getOrLoad]/[refresh]). */
     fun cached(playlistId: String): EpgLoadResult? = cache[playlistId]
@@ -115,7 +143,14 @@ class EpgRepository(context: Context) {
         // ici une fois pour toutes plutôt qu'à charge de chaque appelant.
         // `Dispatchers.Default` (pas `IO`) car c'est un travail CPU, pas une attente
         // réseau/disque.
-        val programs = withContext(Dispatchers.Default) { EpgXmlParser.parse(bytes) }
+        val nowMillis = System.currentTimeMillis()
+        val programs = withContext(Dispatchers.Default) {
+            EpgXmlParser.parse(
+                bytes,
+                keepFromMillis = nowMillis - epgKeepPastMillis,
+                keepUntilMillis = nowMillis + epgKeepFutureMillis
+            )
+        }
         EpgLoadResult.Success(programs.groupBy { it.channelTvgId })
     } catch (e: IllegalArgumentException) {
         EpgLoadResult.Unavailable(e.message ?: "Fichier EPG invalide")
