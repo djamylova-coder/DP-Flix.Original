@@ -6,7 +6,9 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONException
@@ -35,20 +37,48 @@ import org.json.JSONObject
  */
 class XtreamClient(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        // Défauts OkHttp (10s partout) trop courts pour certains panels Xtream : serveur
-        // distant/surchargé lent à établir la connexion, ou réponse `get_live_streams`
-        // volumineuse (plusieurs milliers de chaînes) lente à transférer intégralement.
-        // `readTimeout` plus généreux que `connectTimeout` : une connexion qui ne
-        // s'établit pas du tout après 20s a très peu de chances d'aboutir (mauvais
-        // port/hôte injoignable), alors qu'une réponse volumineuse peut légitimement
-        // prendre plus longtemps à arriver en totalité une fois la connexion établie.
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        // TLS permissif (2026-07-22) : mêmes raisons que IptvHttpDataSourceFactory —
-        // certains panels servent un certificat auto-signé/invalide sur player_api.php
-        // lui-même, ce qui ferait échouer l'authentification avant même d'arriver à la
-        // lecture du flux vidéo. Voir PermissiveTls pour le compromis assumé.
+        // Fix (2026-07-25) : certains panels (ex. constatés depuis 11000 Chelles) mettent
+        // jusqu'à une minute à établir la connexion — parfois lors de CHAQUE tentative de
+        // la cascade User-Agent (executeGet peut donc légitimement prendre plusieurs
+        // minutes bout en bout pour un seul appel `player_api.php`). Les anciens délais
+        // (20s/45s/20s) faisaient donc échouer prématurément des panels par ailleurs
+        // valides, juste lents à répondre. Nouveaux délais généreux, chacun dépassant
+        // 2 minutes : mieux vaut laisser l'utilisateur attendre (avec un indicateur de
+        // chargement côté UI) que déclarer un panel valide injoignable.
+        .connectTimeout(150, TimeUnit.SECONDS)
+        .readTimeout(150, TimeUnit.SECONDS)
+        .writeTimeout(150, TimeUnit.SECONDS)
+        // callTimeout = budget total (connexion + écriture + lecture + éventuelles
+        // redirections) pour un appel donné ; volontairement encore plus large que chacun
+        // des délais individuels ci-dessus pour ne jamais couper une requête par ce
+        // timeout global avant que les délais spécifiques n'aient eu leur chance.
+        .callTimeout(240, TimeUnit.SECONDS)
+        // Un panel lent à connecter l'est souvent de façon intermittente (serveur
+        // mutualisé/surchargé) : retenter automatiquement la connexion TCP au lieu
+        // d'abandonner sur le premier échec augmente les chances d'aboutir sans même
+        // solliciter la cascade de User-Agent.
+        .retryOnConnectionFailure(true)
+        // Force HTTP/1.1 (2026-07-25) : beaucoup de panels Xtream tournent derrière un
+        // reverse-proxy ou un serveur PHP/nginx ancien/mal configuré dont la négociation
+        // HTTP/2 échoue silencieusement ou produit des réponses tronquées, alors que le
+        // même serveur répond normalement en HTTP/1.1 (le protocole que parlent
+        // naturellement ces panels). Option la plus permissive : ne pas risquer une
+        // négociation HTTP/2 qu'un panel bricolé gère mal.
+        .protocols(listOf(Protocol.HTTP_1_1))
+        // Specs de connexion les plus permissives possible pour TLS (2026-07-25) : en
+        // plus du TrustManager/HostnameVerifier permissifs ci-dessous (qui gèrent la
+        // confiance du certificat), COMPATIBLE_TLS accepte des versions TLS et suites de
+        // chiffrement plus anciennes que MODERN_TLS (le défaut OkHttp) — nécessaire pour
+        // les panels tournant sur de vieilles piles OpenSSL. CLEARTEXT reste nécessaire
+        // pour les panels en simple http://.
+        .connectionSpecs(listOf(ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+        .followRedirects(true)
+        .followSslRedirects(true)
+        // TLS permissif (2026-07-22, étendu 2026-07-25) : mêmes raisons que
+        // IptvHttpDataSourceFactory — certains panels servent un certificat auto-signé/
+        // invalide sur player_api.php lui-même, ce qui ferait échouer l'authentification
+        // avant même d'arriver à la lecture du flux vidéo. Voir PermissiveTls pour le
+        // compromis assumé et la prise en charge des vieilles versions TLS (1.0/1.1).
         .sslSocketFactory(PermissiveTls.sslSocketFactory, PermissiveTls.trustManager)
         .hostnameVerifier(PermissiveTls.hostnameVerifier)
         .build()
@@ -79,40 +109,166 @@ class XtreamClient(
         credentials: XtreamCredentials,
         playlistId: String
     ): XtreamResult<XtreamLiveChannelsData> = withContext(Dispatchers.IO) {
-        val authResult = when (val outcome = executeGet(playerApiUrl(credentials))) {
-            is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
-            is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
-            is GetOutcome.Body -> parseAuthBody(outcome.text)
-        }
-        if (authResult !is XtreamResult.Success) {
-            @Suppress("UNCHECKED_CAST")
-            return@withContext authResult as XtreamResult<XtreamLiveChannelsData>
-        }
+        try {
+            val authResult = when (val outcome = executeGet(playerApiUrl(credentials))) {
+                is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
+                is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
+                is GetOutcome.Body -> parseAuthBody(outcome.text)
+            }
+            if (authResult !is XtreamResult.Success) {
+                @Suppress("UNCHECKED_CAST")
+                return@withContext authResult as XtreamResult<XtreamLiveChannelsData>
+            }
 
-        val categoryNames = when (
-            val outcome = executeGet(playerApiUrl(credentials, action = "get_live_categories"))
-        ) {
-            is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
-            is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
-            is GetOutcome.Body -> parseCategories(outcome.text)
-        }
+            val categoryNames = when (
+                val outcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_categories"),
+                    continueOnEmptyArray = true
+                )
+            ) {
+                is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
+                is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
+                is GetOutcome.Body -> parseCategories(outcome.text)
+            }
 
-        val (channels, rawStreamCount) = when (
-            val outcome = executeGet(playerApiUrl(credentials, action = "get_live_streams"))
-        ) {
-            is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
-            is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
-            is GetOutcome.Body -> parseLiveStreams(outcome.text, credentials, playlistId, categoryNames)
-                ?: return@withContext XtreamResult.ServerError(unparsableStreamsMessage(outcome.text))
-        }
+            var (channels, rawStreamCount) = when (
+                val outcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_streams"),
+                    continueOnEmptyArray = true
+                )
+            ) {
+                is GetOutcome.NetworkError -> return@withContext XtreamResult.NetworkError(outcome.message)
+                is GetOutcome.HttpError -> return@withContext XtreamResult.ServerError(httpErrorMessage(outcome.code))
+                is GetOutcome.Body -> parseLiveStreams(outcome.text, credentials, playlistId, categoryNames)
+                    ?: return@withContext XtreamResult.ServerError(unparsableStreamsMessage(outcome.text))
+            }
 
-        XtreamResult.Success(
-            XtreamLiveChannelsData(
-                channels = channels,
-                detectedEpgUrl = buildEpgUrl(credentials),
-                rawStreamCount = rawStreamCount
+            // Fix (2026-07-25) : repli par catégorie pour les gros panels. Certains panels
+            // Xtream (vus sur des comptes à très nombreuses chaînes) répondent volontairement
+            // "[]" à `get_live_streams` SANS `category_id` — même après la cascade de
+            // User-Agent et le fix "catalogue restreint" ci-dessus — pour éviter de servir
+            // des dizaines de milliers d'entrées en un seul appel non filtré, mais répondent
+            // normalement dès qu'on précise une catégorie. Sans ce repli, ces panels
+            // affichaient "0 chaîne" alors que le compte est parfaitement valide et chargé.
+            // Déclenché UNIQUEMENT si l'appel global n'a strictement rien renvoyé (pas de
+            // fausse activation sur un compte réellement vide sans catégories) ; requêtes
+            // séquentielles catégorie par catégorie, acceptables ici car ce chemin ne
+            // s'exécute que quand le chemin rapide a déjà échoué.
+            if (channels.isEmpty() && rawStreamCount == 0 && categoryNames.isNotEmpty()) {
+                val perCategoryChannels = mutableListOf<Channel>()
+                var perCategoryRawCount = 0
+                for (categoryId in categoryNames.keys) {
+                    val categoryOutcome = executeGet(
+                        playerApiUrl(credentials, action = "get_live_streams", categoryId = categoryId),
+                        continueOnEmptyArray = true
+                    )
+                    val (categoryChannels, categoryRawCount) = when (categoryOutcome) {
+                        is GetOutcome.Body -> parseLiveStreams(categoryOutcome.text, credentials, playlistId, categoryNames)
+                            ?: continue // Catégorie illisible isolément : ignorée, pas fatale pour les autres.
+                        else -> continue // Erreur réseau/HTTP isolée à cette catégorie : idem.
+                    }
+                    perCategoryChannels += categoryChannels
+                    perCategoryRawCount += categoryRawCount
+                }
+                if (perCategoryChannels.isNotEmpty()) {
+                    channels = perCategoryChannels
+                    rawStreamCount = perCategoryRawCount
+                }
+            }
+
+            XtreamResult.Success(
+                XtreamLiveChannelsData(
+                    channels = channels,
+                    detectedEpgUrl = buildEpgUrl(credentials),
+                    rawStreamCount = rawStreamCount
+                )
             )
-        )
+        } catch (e: OutOfMemoryError) {
+            // Panel à très nombreuses chaînes (11 000-20 000+) : `get_live_streams` sans
+            // `category_id` renvoie alors un JSON de plusieurs dizaines de Mo, chargé
+            // intégralement en mémoire par `body?.bytes()`
+            // (executeGetWithUserAgentCascade) PUIS reconstruit en objets
+            // `JSONArray`/`JSONObject` (parseLiveStreams) — org.json double/triple
+            // facilement la taille mémoire par rapport au texte brut. OutOfMemoryError
+            // est une `Error`, pas une `Exception` : aucun des `catch` existants
+            // (IOException/IllegalArgumentException/JSONException) ne l'interceptait, donc
+            // elle remontait non rattrapée hors de la coroutine
+            // `viewModelScope.launch` d'OnboardingViewModel.submitXtream et tuait tout le
+            // process — APRÈS que la playlist avait déjà été insérée en base
+            // (`appRepository.playlists.addPlaylist`, avant cet appel), mais AVANT que
+            // `refreshChannels` n'ait pu persister la moindre chaîne : exactement le
+            // symptôme "Xtream Codes charge mais affiche zéro chaîne" — l'app relancée
+            // retrouve la playlist déjà là, toujours vide.
+            //
+            // Repli : chaque appel `get_live_streams&category_id=...` ne charge qu'une
+            // fraction du catalogue à la fois, largement sous la pression mémoire qui a
+            // fait échouer l'appel global non filtré.
+            fetchLiveChannelsByCategoryOnly(credentials, playlistId) ?: XtreamResult.ServerError(
+                "Ce panel a trop de chaînes pour être chargé en une seule fois " +
+                    "(mémoire insuffisante sur l'appareil), et le repli par catégorie a " +
+                    "échoué aussi. Réessayez, ou signalez ce panel pour qu'on ajuste l'app."
+            )
+        }
+    }
+
+    /**
+     * Repli déclenché après un [OutOfMemoryError] sur l'appel global de [fetchLiveChannels] :
+     * ré-authentification déjà faite par l'appelant, on reprend directement aux
+     * catégories puis construit le catalogue catégorie par catégorie — chaque réponse
+     * individuelle est bien plus petite que le flux complet et reste sous la pression
+     * mémoire qui a fait échouer le premier essai.
+     *
+     * @return `null` si ce second essai échoue aussi (catégories introuvables, ou même
+     * une catégorie individuelle sature encore la mémoire sur un panel extrême) —
+     * l'appelant retombe alors sur un message d'erreur explicite plutôt que de masquer
+     * l'échec par un succès vide indiscernable d'un compte réellement sans chaînes.
+     */
+    private suspend fun fetchLiveChannelsByCategoryOnly(
+        credentials: XtreamCredentials,
+        playlistId: String
+    ): XtreamResult<XtreamLiveChannelsData>? {
+        return try {
+            val categoryNames = when (
+                val outcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_categories"),
+                    continueOnEmptyArray = true
+                )
+            ) {
+                is GetOutcome.Body -> parseCategories(outcome.text)
+                else -> return null
+            }
+            if (categoryNames.isEmpty()) return null
+
+            val channels = mutableListOf<Channel>()
+            var rawStreamCount = 0
+            for (categoryId in categoryNames.keys) {
+                val categoryOutcome = executeGet(
+                    playerApiUrl(credentials, action = "get_live_streams", categoryId = categoryId),
+                    continueOnEmptyArray = true
+                )
+                val (categoryChannels, categoryRawCount) = when (categoryOutcome) {
+                    is GetOutcome.Body -> parseLiveStreams(categoryOutcome.text, credentials, playlistId, categoryNames)
+                        ?: continue
+                    else -> continue
+                }
+                channels += categoryChannels
+                rawStreamCount += categoryRawCount
+            }
+            if (channels.isEmpty()) return null
+
+            XtreamResult.Success(
+                XtreamLiveChannelsData(
+                    channels = channels,
+                    detectedEpgUrl = buildEpgUrl(credentials),
+                    rawStreamCount = rawStreamCount
+                )
+            )
+        } catch (e: OutOfMemoryError) {
+            // Même une catégorie individuelle peut en théorie être énorme sur un panel
+            // extrême : on abandonne proprement plutôt que de boucler indéfiniment sur
+            // les catégories restantes avec une mémoire déjà sous pression.
+            null
+        }
     }
 
     /**
@@ -150,7 +306,8 @@ class XtreamClient(
 
     private fun playerApiUrl(
         credentials: XtreamCredentials,
-        action: String? = null
+        action: String? = null,
+        categoryId: String? = null
     ): String {
         val builder = StringBuilder(baseUrl(credentials.serverUrl))
             .append("/player_api.php")
@@ -159,16 +316,59 @@ class XtreamClient(
         if (action != null) {
             builder.append("&action=").append(action)
         }
+        if (categoryId != null) {
+            builder.append("&category_id=").append(encode(categoryId))
+        }
         return builder.toString()
     }
 
-    private fun executeGet(url: String): GetOutcome = try {
+    /**
+     * Point d'entrée réseau unique de la classe : ajoute un fallback de schéma
+     * (2026-07-25) par-dessus la cascade de User-Agent de [executeGetWithUserAgentCascade].
+     *
+     * Beaucoup d'utilisateurs collent une adresse sans schéma (§`baseUrl`, qui suppose
+     * alors `http://` par défaut) alors que le panel n'accepte en réalité QUE du https
+     * (reverse-proxy, panel derrière Cloudflare...) — et inversement, certains panels
+     * fournis en https:// par le revendeur ne répondent en fait qu'en clair sur le même
+     * port. Dans les deux cas, la première tentative échoue au niveau connexion/TLS
+     * (jamais un simple code d'erreur HTTP, qui lui indique un serveur bien joignable) :
+     * on retente alors une fois avec le schéma opposé avant d'abandonner.
+     */
+    private fun executeGet(url: String, continueOnEmptyArray: Boolean = false): GetOutcome {
+        val firstAttempt = executeGetWithUserAgentCascade(url, continueOnEmptyArray)
+        if (firstAttempt !is GetOutcome.NetworkError) return firstAttempt
+
+        val alternateUrl = swapScheme(url) ?: return firstAttempt
+        val secondAttempt = executeGetWithUserAgentCascade(alternateUrl, continueOnEmptyArray)
+        // Ne garde le 2e essai que s'il apporte une vraie réponse serveur (Body ou même
+        // HttpError, qui prouve au moins que ce schéma-là joint le serveur) ; sinon on
+        // remonte l'erreur du tout premier essai, plus représentative de la cause réelle.
+        return if (secondAttempt is GetOutcome.NetworkError) firstAttempt else secondAttempt
+    }
+
+    /** `http://` -> `https://` ou l'inverse ; `null` si l'URL n'a pas l'un de ces deux schémas. */
+    private fun swapScheme(url: String): String? = when {
+        url.startsWith("https://", ignoreCase = true) -> "http://" + url.removePrefix("https://")
+        url.startsWith("http://", ignoreCase = true) -> "https://" + url.removePrefix("http://")
+        else -> null
+    }
+
+    private fun executeGetWithUserAgentCascade(url: String, continueOnEmptyArray: Boolean = false): GetOutcome = try {
         // Cascade de User-Agent (2026-07-22, voir NetworkConstants.USER_AGENT_FALLBACKS) :
         // remplace l'ancien header unique forcé "IPTVSmartersPlayer" — on essaie d'abord
         // sans en-tête personnalisé, puis les signatures connues, jusqu'à obtenir une
-        // réponse HTTP réussie. Un panel qui filtre par User-Agent bloque en général de
-        // façon franche (code d'erreur, pas un simple corps vide), donc `isSuccessful`
-        // suffit comme critère pour passer à la tentative suivante.
+        // réponse exploitable.
+        // Fix (2026-07-25) : `isSuccessful` seul ne suffit PAS comme critère d'arrêt pour
+        // get_live_categories/get_live_streams (continueOnEmptyArray = true côté appelant).
+        // Beaucoup de panels Xtream (fréquent chez les revendeurs) ne bloquent pas un
+        // User-Agent non reconnu par un code d'erreur franc : ils répondent 200 avec un
+        // tableau JSON vide ("[]"), un "catalogue restreint" plutôt qu'un vrai refus. Sans
+        // ce fix, la cascade s'arrêtait dès ce premier 200 "poli" et n'essayait jamais
+        // IPTVSmartersPlayer/VLC/TiviMate, qui auraient débloqué le vrai catalogue. On
+        // continue donc la cascade tant que le corps est un tableau JSON vide ; si TOUTES
+        // les tentatives renvoient [], lastOutcome contient quand même ce dernier [] — un
+        // compte réellement sans chaînes/catégories reste géré normalement en aval
+        // (voir parseLiveStreams/parseCategories).
         var lastOutcome: GetOutcome = GetOutcome.NetworkError("Aucune tentative effectuée")
         for (userAgent in NetworkConstants.USER_AGENT_FALLBACKS) {
             val requestBuilder = Request.Builder().url(url).get()
@@ -184,7 +384,12 @@ class XtreamClient(
                 }
             }
             lastOutcome = outcome
-            if (outcome is GetOutcome.Body) break
+            if (outcome is GetOutcome.Body) {
+                if (continueOnEmptyArray && isEmptyJsonArray(outcome.text)) {
+                    continue
+                }
+                break
+            }
         }
         lastOutcome
     } catch (e: IOException) {
@@ -192,6 +397,23 @@ class XtreamClient(
     } catch (e: IllegalArgumentException) {
         // URL malformée (adresse serveur invalide saisie par l'utilisateur, §4.2).
         GetOutcome.NetworkError(e.message ?: "Adresse de serveur invalide")
+    }
+
+    /**
+     * Détecte un corps `"[]"` (éventuellement entouré d'espaces) : le cas "catalogue
+     * restreint" décrit ci-dessus. Un corps non-tableau (objet d'erreur, HTML...) ou un
+     * tableau non vide renvoie `false` — on ne veut continuer la cascade QUE sur ce cas
+     * précis, pas masquer d'autres formes de réponse qui doivent être traitées ailleurs
+     * (voir parseLiveStreams pour la gestion de "{}"/vide/"null").
+     */
+    private fun isEmptyJsonArray(body: String): Boolean {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return false
+        return try {
+            JSONArray(trimmed).length() == 0
+        } catch (e: JSONException) {
+            false
+        }
     }
 
     private sealed class GetOutcome {

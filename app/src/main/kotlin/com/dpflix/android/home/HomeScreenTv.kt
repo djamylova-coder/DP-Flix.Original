@@ -46,6 +46,7 @@ import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
 import com.dpflix.android.player.PlayerScreen
 import com.dpflix.android.repository.AppRepository
+import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.DpFlixBackground
 import com.dpflix.android.ui.theme.DpFlixColors
 
@@ -85,15 +86,16 @@ import com.dpflix.android.ui.theme.DpFlixColors
  * contenu vidéo. Bouton de fermeture Material3 réutilisé tel quel (mobile, 6c) : reste
  * focusable/cliquable au D-pad comme n'importe quel composant Compose standard.
  *
- * ## Accès au Guide TV (§4.6, étape 9b1)
- * Nouveau bouton "Guide TV" à côté de "Réglages", même équivalent TV du bouton mobile
- * (voir la doc de [HomeScreen]) — navigue vers [com.dpflix.android.epg.EpgGuideScreenTv].
+ * ## Bouton Guide TV retiré (25 juillet 2026)
+ * Le bouton "Guide TV" ([com.dpflix.android.epg.EpgGuideScreenTv], §4.6) qui vivait ici
+ * depuis l'étape 9b1 a été retiré à la demande de l'utilisateur (latence/gels sur une
+ * playlist de 20000+ chaînes) — voir la doc de [HomeScreen]/`DpFlixDestination` pour le
+ * détail de ce qui reste de la gestion EPG indépendamment de cet écran.
  */
 @Composable
 fun HomeScreenTv(
     appRepository: AppRepository,
     onNavigateToSettings: () -> Unit,
-    onNavigateToEpgGuide: () -> Unit,
     onNavigateToPlayerFullscreen: (channelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -102,7 +104,6 @@ fun HomeScreenTv(
     )
     val uiState by viewModel.uiState.collectAsState()
 
-    val epgGuideFocusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
     val firstChannelFocusRequester = remember { FocusRequester() }
     var hasRequestedInitialFocus by remember { mutableStateOf(false) }
@@ -120,12 +121,6 @@ fun HomeScreenTv(
                     Text(text = "DP-Flix", color = DpFlixColors.OnBackground, fontSize = 28.sp)
                     Row {
                         Button(
-                            onClick = onNavigateToEpgGuide,
-                            modifier = Modifier.focusRequester(epgGuideFocusRequester)
-                        ) {
-                            Text("Guide TV")
-                        }
-                        Button(
                             onClick = onNavigateToSettings,
                             modifier = Modifier
                                 .focusRequester(settingsFocusRequester)
@@ -140,6 +135,7 @@ fun HomeScreenTv(
                 if (preview != null) {
                     MiniPlayerTv(
                         channel = preview,
+                        programTitle = uiState.previewProgramTitle,
                         onExpand = { onNavigateToPlayerFullscreen(preview.id) },
                         onDismiss = viewModel::dismissPreview
                     )
@@ -175,11 +171,11 @@ fun HomeScreenTv(
 /**
  * Zone haute (§4.4), équivalent TV de `MiniPlayer` (mobile, `HomeScreen.kt`) — voir la
  * doc de [HomeScreenTv] sur le choix d'un `Box` focusable plutôt qu'un [Button] ici.
- * Même absence d'infos EPG que côté mobile : voir la doc de [HomeScreen] à ce sujet,
- * inchangée à cette sous-étape.
+ * Même programme en cours que côté mobile, résolu par le même [HomeViewModel] partagé
+ * (voir sa doc et celle de [HomeScreen] sur [HomeUiState.previewProgramTitle]).
  */
 @Composable
-private fun MiniPlayerTv(channel: Channel, onExpand: () -> Unit, onDismiss: () -> Unit) {
+private fun MiniPlayerTv(channel: Channel, programTitle: String?, onExpand: () -> Unit, onDismiss: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
 
     Column(
@@ -217,7 +213,13 @@ private fun MiniPlayerTv(channel: Channel, onExpand: () -> Unit, onDismiss: () -
             fontSize = 20.sp,
             modifier = Modifier.padding(top = 8.dp)
         )
-        // Programme en cours : non affiché, voir la doc de HomeScreenTv (EPG pas encore branché).
+        if (programTitle != null) {
+            Text(
+                text = programTitle,
+                color = DpFlixColors.OnBackgroundMuted,
+                fontSize = 16.sp
+            )
+        }
     }
 }
 
@@ -301,6 +303,9 @@ private fun ChannelCardTv(
             channel.displayNumber?.let { number ->
                 Text(text = "$number", color = DpFlixColors.OnBackgroundMuted, fontSize = 14.sp)
             }
+            // [Fix logos accueil] voir la doc de com.dpflix.android.ui.ChannelLogo —
+            // même correctif que côté mobile (HomeScreen.ChannelCard).
+            ChannelLogo(channel = channel, size = 48.dp)
             Text(text = channel.name, color = DpFlixColors.OnBackground, fontSize = 16.sp)
             if (isSelected) {
                 Text(text = "En aperçu", color = DpFlixColors.Red, fontSize = 12.sp)

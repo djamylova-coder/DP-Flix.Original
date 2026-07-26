@@ -45,13 +45,31 @@ object EpgXmlParser {
         Regex("""^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-]\d{4}))?""")
 
     /**
+     * Fix (2026-07-25, crash plein écran sur gros Xtream) : bornes par défaut de la fenêtre
+     * de rétention ci-dessous, utilisées par les surcharges sans paramètre explicite (tests
+     * notamment) — larges par prudence, la valeur qui compte en pratique est celle passée
+     * explicitement par [com.dpflix.android.repository.EpgRepository.load].
+     */
+    private const val DEFAULT_KEEP_PAST_MILLIS = 24L * 60 * 60 * 1000
+    private const val DEFAULT_KEEP_FUTURE_MILLIS = 7L * 24 * 60 * 60 * 1000
+
+    /**
      * @param rawBytes contenu brut déjà téléchargé (ou lu depuis un fichier local importé,
      * §5.4), compressé gzip ou non — la compression est détectée automatiquement via les
      * octets magiques (`1F 8B`), indépendamment de ce que l'URL/nom de fichier suggère.
+     * @param keepFromMillis/@param keepUntilMillis fenêtre de rétention (voir la doc de
+     * classe, "Fenêtre de rétention" plus bas) : tout `<programme>` entièrement hors de
+     * `[keepFromMillis, keepUntilMillis]` est ignoré SANS même construire les chaînes
+     * titre/description (voir [skipElementBody]), ce qui est le point qui économise la
+     * mémoire (pas seulement le fait de ne pas garder l'objet final).
      * @throws IllegalArgumentException si le contenu n'est pas un document XMLTV exploitable
      * (pas de balise racine `<tv>`).
      */
-    fun parse(rawBytes: ByteArray): List<EpgProgram> {
+    fun parse(
+        rawBytes: ByteArray,
+        keepFromMillis: Long = System.currentTimeMillis() - DEFAULT_KEEP_PAST_MILLIS,
+        keepUntilMillis: Long = System.currentTimeMillis() + DEFAULT_KEEP_FUTURE_MILLIS
+    ): List<EpgProgram> {
         val isGzip = rawBytes.size >= 2 &&
             rawBytes[0] == 0x1f.toByte() &&
             rawBytes[1] == 0x8b.toByte()
@@ -62,14 +80,18 @@ object EpgXmlParser {
             ByteArrayInputStream(rawBytes)
         }
 
-        return stream.use { parse(it) }
+        return stream.use { parse(it, keepFromMillis, keepUntilMillis) }
     }
 
     /** Variante texte pratique (contenu déjà décodé), par exemple pour des tests. */
-    fun parse(rawXml: String): List<EpgProgram> =
-        parse(ByteArrayInputStream(rawXml.toByteArray(Charsets.UTF_8)))
+    fun parse(
+        rawXml: String,
+        keepFromMillis: Long = System.currentTimeMillis() - DEFAULT_KEEP_PAST_MILLIS,
+        keepUntilMillis: Long = System.currentTimeMillis() + DEFAULT_KEEP_FUTURE_MILLIS
+    ): List<EpgProgram> =
+        parse(ByteArrayInputStream(rawXml.toByteArray(Charsets.UTF_8)), keepFromMillis, keepUntilMillis)
 
-    private fun parse(input: InputStream): List<EpgProgram> {
+    private fun parse(input: InputStream, keepFromMillis: Long, keepUntilMillis: Long): List<EpgProgram> {
         val parser: XmlPullParser = XmlPullParserFactory.newInstance().newPullParser()
         // encoding = null : laisse le parseur détecter l'encodage déclaré dans le prologue
         // XML (ou le BOM), les flux XMLTV n'étant pas toujours en UTF-8.
@@ -87,7 +109,7 @@ object EpgXmlParser {
             if (eventType == XmlPullParser.START_TAG) {
                 when (parser.name) {
                     "tv" -> sawTvRoot = true
-                    "programme" -> parseProgrammeElement(parser)?.let { programs += it }
+                    "programme" -> parseProgrammeElement(parser, keepFromMillis, keepUntilMillis)?.let { programs += it }
                 }
             }
             eventType = try {
@@ -106,14 +128,49 @@ object EpgXmlParser {
     }
 
     /**
-     * Le curseur est sur le START_TAG `<programme>` en entrant ; consomme tout le sous-arbre
-     * jusqu'à son END_TAG correspondant, y compris en cas d'échec de parsing des horaires,
-     * pour ne pas désynchroniser le pull parser pour la suite du document.
+     * ## Fenêtre de rétention (fix 2026-07-25 — crash au passage en plein écran, gros Xtream)
+     * Avant ce correctif, `parse` gardait TOUS les `<programme>` du guide, pour TOUTES les
+     * chaînes, sans aucune limite — cohérent tant que rien n'utilisait plus que "le
+     * programme en cours" (§4.6/8b). Un XMLTV réel couvre en général plusieurs jours par
+     * chaîne ; sur un panel à 11 000+ chaînes ça peut représenter plusieurs centaines de
+     * milliers, voire des millions de `<programme>`, chacun devenant un [EpgProgram] retenu
+     * indéfiniment dans le cache mémoire d'[com.dpflix.android.repository.EpgRepository]
+     * (pas de TTL, voir sa doc) — largement de quoi dépasser ce qu'un mobile bas/moyen de
+     * gamme peut allouer, alors que seule une poignée de ces entrées (celles autour de
+     * l'instant présent) sert jamais à quoi que ce soit : l'écran de grille EPG qui aurait
+     * pu justifier de tout garder a été retiré (`README-retrait-ecran-guide-tv.md`), seuls
+     * restent l'OSD "programme en cours" du lecteur et le statut de Réglages, qui n'ont
+     * besoin ni du passé lointain ni de plusieurs jours à l'avance.
+     *
+     * `keepFromMillis`/`keepUntilMillis` bornent donc ce qui est conservé : un `<programme>`
+     * entièrement avant `keepFromMillis` (déjà terminé) ou entièrement après
+     * `keepUntilMillis` (trop loin dans le futur) est ignoré. Le test se fait sur les
+     * horaires seuls (attributs `start`/`stop` du `<programme>`, déjà lus à ce stade) : s'il
+     * ne passe pas, [skipElementBody] avance le curseur jusqu'à la fin de l'élément SANS
+     * jamais lire `<title>`/`<desc>` (pas d'allocation de `String` pour ces entrées hors
+     * fenêtre) — c'est ce qui borne réellement la mémoire, pas juste le fait de ne pas
+     * ajouter l'`EpgProgram` final à la liste.
+     *
+     * Le curseur est sur le START_TAG `<programme>` en entrant ; ressort sur son END_TAG
+     * correspondant dans tous les cas (élément retenu ou non), pour ne pas désynchroniser
+     * le pull parser pour la suite du document.
      */
-    private fun parseProgrammeElement(parser: XmlPullParser): EpgProgram? {
+    private fun parseProgrammeElement(
+        parser: XmlPullParser,
+        keepFromMillis: Long,
+        keepUntilMillis: Long
+    ): EpgProgram? {
         val channelId = parser.getAttributeValue(null, "channel")?.takeIf { it.isNotBlank() }
         val startMillis = parser.getAttributeValue(null, "start")?.let(::parseXmltvDateTime)
         val stopMillis = parser.getAttributeValue(null, "stop")?.let(::parseXmltvDateTime)
+
+        val inWindow = startMillis != null && stopMillis != null &&
+            stopMillis > keepFromMillis && startMillis < keepUntilMillis
+
+        if (!inWindow) {
+            skipElementBody(parser)
+            return null
+        }
 
         var title: String? = null
         var description: String? = null
@@ -154,6 +211,25 @@ object EpgXmlParser {
             startTimeMillis = startMillis,
             endTimeMillis = stopMillis
         )
+    }
+
+    /**
+     * Avance le curseur jusqu'au END_TAG du `<programme>` courant sans jamais lire de texte
+     * (contrairement à [readTextOrNull]) — utilisé pour les entrées hors fenêtre de
+     * rétention, où le contenu de `<title>`/`<desc>` ne sert jamais à rien (voir la doc de
+     * [parseProgrammeElement]). Le curseur est sur le premier `next()` suivant le START_TAG
+     * `<programme>` en entrant (même convention que la boucle `depth` ci-dessus).
+     */
+    private fun skipElementBody(parser: XmlPullParser) {
+        var depth = 1
+        var eventType = parser.next()
+        while (depth > 0 && eventType != XmlPullParser.END_DOCUMENT) {
+            when (eventType) {
+                XmlPullParser.START_TAG -> depth++
+                XmlPullParser.END_TAG -> depth--
+            }
+            if (depth > 0) eventType = parser.next()
+        }
     }
 
     /**

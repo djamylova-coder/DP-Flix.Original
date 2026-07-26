@@ -20,13 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -42,6 +42,7 @@ import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
 import com.dpflix.android.player.PlayerScreen
 import com.dpflix.android.repository.AppRepository
+import com.dpflix.android.ui.ChannelLogo
 import com.dpflix.android.ui.DpFlixBackground
 import com.dpflix.android.ui.theme.DpFlixColors
 import com.dpflix.android.ui.theme.DpFlixTheme
@@ -55,24 +56,24 @@ import com.dpflix.android.ui.theme.DpFlixTheme
  * Fond d'écran partagé avec l'onboarding (§4.4 "identique à l'onboarding") via
  * [DpFlixBackground], comme prévu dès l'étape 6b.
  *
- * ## Mini-lecteur et EPG
+ * ## Mini-lecteur et EPG (branché le 25 juillet 2026)
  * Le §4.4 décrit, sous la vidéo du mini-lecteur, "le nom de la chaîne + programme en
- * cours, si EPG disponible". Aucune couche EPG n'est encore branchée sur `AppRepository`
- * à ce stade (`EpgXmlParser` existe depuis l'étape 3d mais sa persistance/son affichage
- * sont prévus pour une étape ultérieure, voir 6b) : le mini-lecteur n'affiche donc que le
- * nom de la chaîne pour l'instant, jamais de programme en cours — équivalent au cas "EPG
- * indisponible" du cahier des charges, pas une régression à corriger ici.
+ * cours, si EPG disponible". Désormais résolu via [HomeViewModel.loadPreviewProgramTitle]
+ * (même logique que l'OSD du lecteur plein écran, `PlayerScreen.currentProgramTitle`) et
+ * exposé par [HomeUiState.previewProgramTitle] — `null` (donc rien affiché) si `tvgId`
+ * est absent sur la chaîne ou si aucun guide EPG n'est disponible pour la playlist,
+ * équivalent au cas "EPG indisponible" du cahier des charges.
  *
- * ## Accès au Guide TV (§4.6, étape 9b1)
- * Nouveau bouton "Guide TV" à côté de Réglages, dans le même en-tête — navigue vers
- * [com.dpflix.android.epg.EpgGuideScreen] (squelette de grille, sans lien de zapping
- * depuis la grille pour l'instant : voir l'étape 9d).
+ * ## Bouton Guide TV retiré (25 juillet 2026)
+ * L'accès au Guide TV ([com.dpflix.android.epg.EpgGuideScreen], §4.6) qui vivait ici
+ * depuis l'étape 9b1 a été retiré à la demande de l'utilisateur (latence/gels sur une
+ * playlist de 20000+ chaînes) — voir la doc de `DpFlixDestination` pour le détail de ce
+ * qui reste de la gestion EPG (OSD, Réglages) indépendamment de cet écran.
  */
 @Composable
 fun HomeScreen(
     appRepository: AppRepository,
     onNavigateToSettings: () -> Unit,
-    onNavigateToEpgGuide: () -> Unit,
     onNavigateToPlayerFullscreen: (channelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -80,6 +81,15 @@ fun HomeScreen(
         factory = remember { HomeViewModelFactory(appRepository) }
     )
     val uiState by viewModel.uiState.collectAsState()
+
+    // Fix (25 juillet 2026, vague 1 "stop crash", diagnostic point 2) : voir la doc de
+    // HomeUiState.previewPlaybackActive. Remet le mini-lecteur en état "actif" à chaque
+    // fois que cet écran revient en composition (retour arrière depuis le plein écran
+    // inclus) — suspendPreviewPlayback() ci-dessous ne fait que suspendre temporairement
+    // le temps de la transition vers le plein écran, jamais définitivement.
+    LaunchedEffect(Unit) {
+        viewModel.resumePreviewPlaybackIfNeeded()
+    }
 
     DpFlixTheme {
         DpFlixBackground(modifier = modifier.fillMaxSize()) {
@@ -98,13 +108,6 @@ fun HomeScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Row {
-                        IconButton(onClick = onNavigateToEpgGuide) {
-                            Icon(
-                                imageVector = Icons.Filled.LiveTv,
-                                contentDescription = "Guide TV",
-                                tint = DpFlixColors.OnBackground
-                            )
-                        }
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
@@ -119,7 +122,12 @@ fun HomeScreen(
                 if (preview != null) {
                     MiniPlayer(
                         channel = preview,
-                        onExpand = { onNavigateToPlayerFullscreen(preview.id) },
+                        programTitle = uiState.previewProgramTitle,
+                        playbackActive = uiState.previewPlaybackActive,
+                        onExpand = {
+                            viewModel.suspendPreviewPlayback()
+                            onNavigateToPlayerFullscreen(preview.id)
+                        },
                         onDismiss = viewModel::dismissPreview
                     )
                 }
@@ -134,7 +142,10 @@ fun HomeScreen(
                         selectedChannelId = preview?.id,
                         onChannelClick = { channel ->
                             val goFullscreen = viewModel.onChannelClicked(channel)
-                            if (goFullscreen) onNavigateToPlayerFullscreen(channel.id)
+                            if (goFullscreen) {
+                                viewModel.suspendPreviewPlayback()
+                                onNavigateToPlayerFullscreen(channel.id)
+                            }
                         }
                     )
                 }
@@ -147,9 +158,23 @@ fun HomeScreen(
  * Zone haute (§4.4) : vidéo en cours (avec le son — [PlayerScreen] gère déjà l'audio et
  * ses propres états de chargement/erreur, réutilisé tel quel) + infos de diffusion en
  * dessous. Bouton de fermeture ajouté (voir la doc de [HomeViewModel.dismissPreview]).
+ *
+ * [playbackActive] (fix 25 juillet 2026, vague 1 "stop crash", diagnostic point 2, voir la
+ * doc de [HomeUiState.previewPlaybackActive]) : quand `false`, n'instancie PAS
+ * [PlayerScreen] — donc pas de second `PlayerController`/ExoPlayer/tampons vivant en même
+ * temps que celui du plein écran en cours d'ouverture. Le rectangle noir seul (sans
+ * lecteur) reste affiché le temps de la transition ; channel/onDismiss restent actifs pour
+ * ne rien changer au reste du comportement (fermeture toujours possible pendant ce court
+ * instant).
  */
 @Composable
-private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> Unit) {
+private fun MiniPlayer(
+    channel: Channel,
+    programTitle: String?,
+    playbackActive: Boolean,
+    onExpand: () -> Unit,
+    onDismiss: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -163,7 +188,9 @@ private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> 
                 .background(Color.Black)
                 .clickable(onClick = onExpand)
         ) {
-            PlayerScreen(channel = channel, modifier = Modifier.fillMaxSize(), osdEnabled = false)
+            if (playbackActive) {
+                PlayerScreen(channel = channel, modifier = Modifier.fillMaxSize(), osdEnabled = false)
+            }
             IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd)) {
                 Icon(
                     imageVector = Icons.Filled.Close,
@@ -181,7 +208,15 @@ private fun MiniPlayer(channel: Channel, onExpand: () -> Unit, onDismiss: () -> 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            // Programme en cours : non affiché, voir la doc de HomeScreen (EPG pas encore branché).
+            if (programTitle != null) {
+                Text(
+                    text = programTitle,
+                    color = DpFlixColors.OnBackgroundMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -256,7 +291,12 @@ private fun ChannelCard(channel: Channel, isSelected: Boolean, onClick: () -> Un
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        // [Fix logos accueil] channel.logoUrl était collecté (M3U tvg-logo / Xtream
+        // stream_icon) et déjà utilisé dans l'OSD du lecteur, mais jamais affiché ici —
+        // voir la doc de com.dpflix.android.ui.ChannelLogo pour le détail.
+        ChannelLogo(channel = channel, size = 48.dp)
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = channel.name,
             color = DpFlixColors.OnBackground,

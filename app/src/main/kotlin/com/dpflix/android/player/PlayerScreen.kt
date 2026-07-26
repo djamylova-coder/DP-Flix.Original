@@ -273,6 +273,14 @@ fun PlayerScreen(
     fun applyZap(target: Channel) {
         currentChannel = target
         liveEdgeOffsetSeconds = null
+        // Garde-fou (25 juillet 2026, vague 1 "stop crash", diagnostic point 3/8a) : reset
+        // synchrone au même endroit que liveEdgeOffsetSeconds ci-dessus, PAS seulement dans
+        // le LaunchedEffect(currentChannel.id) plus bas (aujourd'hui commenté). currentProgramTitle
+        // vaut déjà toujours null tant que ce bloc reste désactivé (aucun effet visible ici
+        // pour l'instant), mais si quelqu'un le réactive un jour sans y penser, ce reset
+        // synchrone évite le flash du titre de l'ancienne chaîne juste après un zap, le temps
+        // que la coroutine du LaunchedEffect démarre après la recomposition.
+        currentProgramTitle = null
         controller?.playChannel(target)
         showOsd()
     }
@@ -430,20 +438,30 @@ fun PlayerScreen(
     // prise d'antenne : le cache partage avec Reglages (bouton "Rafraichir l'EPG") evite
     // de retelecharger tout le guide XMLTV a chaque zap sur la meme playlist - remplace
     // l'ancien EpgNowLookup (sans cache, et qui visait un champ Playlist inexistant).
-    LaunchedEffect(currentChannel.id) {
-        currentProgramTitle = null
-        val repository = appRepository ?: return@LaunchedEffect
-        val activeChannel = currentChannel
-        val tvgId = activeChannel.tvgId
-        if (tvgId.isNullOrBlank()) return@LaunchedEffect
-        val playlist = repository.playlists.getById(activeChannel.playlistId) ?: return@LaunchedEffect
-        val result = repository.epg.getOrLoad(playlist)
-        currentProgramTitle = (result as? EpgLoadResult.Success)
-            ?.programsByChannel
-            ?.get(tvgId)
-            ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
-            ?.title
-    }
+    // Désactivé le 25 juillet 2026 à la demande de l'utilisateur : cette résolution EPG se
+    // déclenchait à l'entrée en plein écran (tap sur le mini-lecteur) en même temps que
+    // HomeViewModel.loadPreviewProgramTitle (encore en cours côté mini-lecteur à ce
+    // moment-là), créant un conflit perçu pendant la transition. Le Mutex par playlist
+    // (EpgRepository, fix du même jour) empêche déjà les deux appels de télécharger/parser
+    // en double, mais le second attend quand même la fin du premier - ce blocage au moment
+    // précis du passage plein écran restait perceptible. currentProgramTitle reste donc
+    // toujours `null` (cas déjà géré nativement partout où il est lu, voir PlayerOsd) :
+    // plus aucune requête EPG n'est émise pendant la lecture plein écran.
+    // Pour réactiver : décommenter le bloc ci-dessous.
+    // LaunchedEffect(currentChannel.id) {
+    //     currentProgramTitle = null
+    //     val repository = appRepository ?: return@LaunchedEffect
+    //     val activeChannel = currentChannel
+    //     val tvgId = activeChannel.tvgId
+    //     if (tvgId.isNullOrBlank()) return@LaunchedEffect
+    //     val playlist = repository.playlists.getById(activeChannel.playlistId) ?: return@LaunchedEffect
+    //     val result = repository.epg.getOrLoad(playlist)
+    //     currentProgramTitle = (result as? EpgLoadResult.Success)
+    //         ?.programsByChannel
+    //         ?.get(tvgId)
+    //         ?.firstOrNull { it.isCurrentlyAiring(System.currentTimeMillis()) }
+    //         ?.title
+    // }
 
     // Volume (8d5) : synchronisation inverse par rapport a 8d4 - suit les changements de
     // volume DECLENCHES AILLEURS (boutons physiques de l'appareil pendant que le plein

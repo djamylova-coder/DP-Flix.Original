@@ -16,9 +16,30 @@ import com.dpflix.android.model.ChannelCategory
  *   par [com.dpflix.android.repository.ChannelRepository.observeGroupedByCategory].
  * @property previewChannel Chaîne actuellement ouverte dans le mini-lecteur (§4.4 "Zone
  *   haute"), `null` tant qu'aucune chaîne n'a encore été cliquée.
+ * @property previewProgramTitle Programme en cours de [previewChannel] pour l'EPG,
+ *   affiché sous le nom de la chaîne dans le mini-lecteur (§4.4 "nom de la chaîne +
+ *   programme en cours, si EPG disponible") — `null` tant que non résolu ou si l'EPG
+ *   n'est pas disponible pour cette chaîne (voir [HomeViewModel.loadPreviewProgramTitle]
+ *   pour la logique de résolution, identique à l'OSD du lecteur plein écran).
+ * @property previewPlaybackActive Fix (25 juillet 2026, vague 1 "stop crash", diagnostic
+ *   point 2) : tant que `true` (valeur par défaut), [HomeScreen.MiniPlayer] instancie un
+ *   vrai [com.dpflix.android.player.PlayerScreen] (donc son propre `PlayerController`/
+ *   ExoPlayer/tampons). Passé à `false` par [HomeViewModel.suspendPreviewPlayback] au
+ *   moment précis où l'utilisateur agrandit la chaîne prévisualisée en plein écran : sans
+ *   ça, le mini-lecteur (toujours dans la pile de retour de la navigation) et le nouveau
+ *   lecteur plein écran gardaient chacun un ExoPlayer + ses tampons vivants en même temps
+ *   le temps de la transition — exactement le pic mémoire suspecté par le diagnostic sur
+ *   mobile bas/moyen de gamme. `previewChannel`/`previewProgramTitle` restent inchangés
+ *   pour ne rien casser au retour arrière (le nom de la chaîne réapparaît immédiatement),
+ *   seul le rendu vidéo du mini-lecteur est temporairement remplacé par un espace réservé
+ *   statique (voir [HomeScreen.MiniPlayer]) le temps que le plein écran prenne la main.
+ *   Remis à `true` par [HomeViewModel.resumePreviewPlaybackIfNeeded] dès que l'accueil
+ *   revient en composition (retour arrière depuis le plein écran).
  */
 data class HomeUiState(
     val hasActivePlaylist: Boolean = false,
     val categories: List<ChannelCategory> = emptyList(),
-    val previewChannel: Channel? = null
+    val previewChannel: Channel? = null,
+    val previewProgramTitle: String? = null,
+    val previewPlaybackActive: Boolean = true
 )

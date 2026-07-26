@@ -5,7 +5,9 @@ import com.dpflix.android.db.toDomain
 import com.dpflix.android.db.toEntity
 import com.dpflix.android.model.Channel
 import com.dpflix.android.model.ChannelCategory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
 class ChannelRepository(private val channelDao: ChannelDao) {
@@ -29,12 +31,20 @@ class ChannelRepository(private val channelDao: ChannelDao) {
      *
      * Une chaîne sans catégorie (`category == null`) est regroupée sous la clé `""` :
      * à l'UI (étape 6/7) de choisir le libellé affiché pour ce groupe (i18n), pas au repository.
+     *
+     * Fix (2026-07-25) : `flowOn(Dispatchers.Default)` — `groupBy`/`map` sur une playlist
+     * de 20000+ chaînes est un travail CPU non négligeable ; sans ce `flowOn`, l'opérateur
+     * `map` juste au-dessus s'exécute sur le dispatcher du collecteur (`Main.immediate`
+     * côté UI), ce qui peut geler brièvement l'accueil à chaque mise à jour de la liste.
+     * `Dispatchers.Default` (pas `IO`) car c'est du calcul pur, pas une attente réseau/
+     * disque — `observeByPlaylist`/`channelDao` restent inchangés, seul ce regroupement
+     * est déplacé.
      */
     fun observeGroupedByCategory(playlistId: String): Flow<List<ChannelCategory>> =
         observeByPlaylist(playlistId).map { channels ->
             channels.groupBy { it.category ?: "" }
                 .map { (category, channelsInCategory) -> ChannelCategory(category, channelsInCategory) }
-        }
+        }.flowOn(Dispatchers.Default)
 
     /**
      * Rafraîchit les chaînes d'une playlist à partir d'un nouveau parsing (M3U 3b / Xtream 3c),

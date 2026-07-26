@@ -70,3 +70,16 @@ Pas de compilation Gradle réelle possible dans cet environnement (pas d'accès 
 vérification faite par relecture ciblée, pas par un build. À tester en conditions réelles
 (ouvrir un aperçu de chaîne sur l'accueil avec une playlist ayant un EPG valide) avant de
 considérer ce correctif définitivement clos.
+
+## ⚠️ Correctif au correctif (25 juillet 2026, diagnostic complet, point 5a)
+La section "Vérification croisée" ci-dessus affirmait `android:configChanges` **déjà
+présent** sur `MainActivity`/`TvMainActivity` — vérifié **faux** par une relecture directe
+et indépendante du manifeste : l'attribut n'y a jamais existé, malgré cette affirmation.
+Traité comme une faille de processus (mauvais commit/merge, ou relecture qui a validé le
+mauvais fichier/une mauvaise version) plutôt qu'un simple oubli de code.
+
+Effectivement ajouté depuis (vague 1 "stop crash") sur les deux `<activity>` :
+`android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|
+smallestScreenSize|uiMode"`. Ce document reste volontairement inchangé au-dessus (trace de
+ce qui s'est réellement passé) — seule cette section fait foi sur l'état actuel du
+manifeste.
