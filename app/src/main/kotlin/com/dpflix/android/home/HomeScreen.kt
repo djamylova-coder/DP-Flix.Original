@@ -29,7 +29,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,6 +94,34 @@ fun HomeScreen(
         viewModel.resumePreviewPlaybackIfNeeded()
     }
 
+    // Fix (4 août 2026, vague 2 "stop crash sur grosses playlists") : le fix du 25 juillet
+    // (previewPlaybackActive) appelait suspendPreviewPlayback() ET onNavigateToPlayerFullscreen(...)
+    // dans le même clic, en supposant que la recomposition qui démonte le PlayerScreen du
+    // mini-lecteur (et libère donc son ExoPlayer, voir DisposableEffect(channel.id) dans
+    // PlayerScreen) aurait forcément lieu avant que le plein écran ne crée le sien. Ce n'est
+    // pas garanti : la mise à jour du StateFlow ne recompose qu'à la frame suivante, alors
+    // que navController.navigate() peut faire apparaître la nouvelle destination dès la même
+    // frame — les deux ExoPlayer coexistent alors brièvement, ce qui plante le processus sur
+    // pas mal d'appareils. Avec une playlist de 500+ chaînes, le regroupement par catégories
+    // et les logos en mémoire alourdissent cette frame précise, ce qui allonge la fenêtre de
+    // chevauchement et rend le crash beaucoup plus probable qu'avec une petite playlist —
+    // cohérent avec le symptôme signalé ("plante seulement au-delà de ~500 chaînes").
+    //
+    // Correctif : on ne navigue plus dans la même frame. pendingFullscreenChannelId mémorise
+    // l'intention ; le LaunchedEffect ci-dessous attend que previewPlaybackActive soit bien
+    // passé à false (donc que la recomposition ait eu lieu) PUIS laisse passer une frame
+    // Compose supplémentaire (withFrameNanos) avant de naviguer, pour être certain que
+    // l'ancien ExoPlayer a bien fini de se libérer avant que le nouveau ne soit créé.
+    var pendingFullscreenChannelId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingFullscreenChannelId, uiState.previewPlaybackActive) {
+        val channelId = pendingFullscreenChannelId
+        if (channelId != null && !uiState.previewPlaybackActive) {
+            withFrameNanos { }
+            pendingFullscreenChannelId = null
+            onNavigateToPlayerFullscreen(channelId)
+        }
+    }
+
     DpFlixTheme {
         DpFlixBackground(modifier = modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -126,7 +157,7 @@ fun HomeScreen(
                         playbackActive = uiState.previewPlaybackActive,
                         onExpand = {
                             viewModel.suspendPreviewPlayback()
-                            onNavigateToPlayerFullscreen(preview.id)
+                            pendingFullscreenChannelId = preview.id
                         },
                         onDismiss = viewModel::dismissPreview
                     )
@@ -144,7 +175,7 @@ fun HomeScreen(
                             val goFullscreen = viewModel.onChannelClicked(channel)
                             if (goFullscreen) {
                                 viewModel.suspendPreviewPlayback()
-                                onNavigateToPlayerFullscreen(channel.id)
+                                pendingFullscreenChannelId = channel.id
                             }
                         }
                     )
